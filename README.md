@@ -27,14 +27,16 @@ Cross-platform desktop notifications for Claude Code - get alerts when tasks com
 
 ## 📸 Screenshots
 
-<details>
-<summary>Click to see notifications in action</summary>
+See Claude-Notify in action across different notification types:
 
+### ✅ Task Complete
 ![Task Complete Notification](assets/notification-complete.png)
-![Input Required Notification](assets/notification-input.png)
-![Error Notification](assets/notification-error.png)
 
-</details>
+### 🔔 Input Required
+![Input Required Notification](assets/notification-input.png)
+
+### ❌ Error Notification
+![Error Notification](assets/notification-error.png)
 
 ## 🚀 Quick Start
 
