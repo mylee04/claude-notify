@@ -106,29 +106,53 @@ That's it! You'll now receive notifications when Claude Code completes tasks.
 
 ## 📖 Usage
 
+Claude-notify provides **two ways** to run every command - use whichever you prefer!
+
 ### Global Commands
 
-Use these commands to control notifications for all projects:
+Control notifications for all projects. **Both commands do exactly the same thing:**
 
 ```bash
-# Full command → Alias
-claude-notify on      →  cn on       # Enable notifications
-claude-notify off     →  cn off      # Disable notifications
-claude-notify status  →  cn status   # Check status
-claude-notify test    →  cn test     # Send test notification
+# Enable notifications - choose either command:
+claude-notify on          # Full command
+cn on                     # Short alias (same result!)
+
+# Disable notifications - choose either command:
+claude-notify off         # Full command
+cn off                    # Short alias (same result!)
+
+# Check status - choose either command:
+claude-notify status      # Full command
+cn status                 # Short alias (same result!)
+
+# Send test notification - choose either command:
+claude-notify test        # Full command
+cn test                   # Short alias (same result!)
 ```
 
 ### Project Commands
 
-Control notifications for the current project only:
+Control notifications for the current project only. **Both commands do exactly the same thing:**
 
 ```bash
-# Full command → Alias
-claude-notify project on      →  cnp on      # Enable for project
-claude-notify project off     →  cnp off     # Disable for project
-claude-notify project status  →  cnp status  # Check project status
-claude-notify project init    →  cnp init    # Interactive setup
+# Enable for current project - choose either command:
+claude-notify project on  # Full command
+cnp on                    # Short alias (same result!)
+
+# Disable for current project - choose either command:
+claude-notify project off # Full command
+cnp off                   # Short alias (same result!)
+
+# Check project status - choose either command:
+claude-notify project status  # Full command
+cnp status                    # Short alias (same result!)
+
+# Interactive setup - choose either command:
+claude-notify project init    # Full command
+cnp init                      # Short alias (same result!)
 ```
+
+💡 **Tip**: Use full commands in scripts/documentation for clarity, and short aliases for quick daily use!
 
 ### How It Works
 
