@@ -1,0 +1,32 @@
+# Bash completion for claude-notify
+
+_claude_notify() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    
+    # Main commands
+    local main_commands="on off status test setup project help version"
+    local project_commands="on off status init"
+    
+    case "${prev}" in
+        claude-notify|cn)
+            COMPREPLY=( $(compgen -W "${main_commands}" -- ${cur}) )
+            return 0
+            ;;
+        project)
+            COMPREPLY=( $(compgen -W "${project_commands}" -- ${cur}) )
+            return 0
+            ;;
+        cnp)
+            COMPREPLY=( $(compgen -W "${project_commands}" -- ${cur}) )
+            return 0
+            ;;
+    esac
+}
+
+# Register completions
+complete -F _claude_notify claude-notify
+complete -F _claude_notify cn
+complete -F _claude_notify cnp

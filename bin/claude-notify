@@ -1,0 +1,116 @@
+#!/bin/bash
+
+# Claude-Notify - Native OS notifications for Claude Code
+# https://github.com/mylee04/claude-notify
+
+set -e
+
+# Version
+VERSION="1.0.0"
+
+# Determine the directory where the script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$(dirname "$SCRIPT_DIR")/lib/claude-notify"
+
+# Load utility functions
+source "$LIB_DIR/utils/colors.sh"
+source "$LIB_DIR/utils/detect.sh"
+source "$LIB_DIR/core/config.sh"
+
+# Detect how the script was called
+COMMAND_NAME=$(basename "$0")
+
+# Show version
+show_version() {
+    echo "claude-notify version $VERSION"
+}
+
+# Show help
+show_help() {
+    cat << EOF
+${BOLD}Claude-Notify${RESET} - Native OS notifications for Claude Code
+
+${BOLD}USAGE:${RESET}
+    $COMMAND_NAME <command> [options]
+
+${BOLD}COMMANDS:${RESET}
+    ${GREEN}on${RESET}              Enable notifications globally
+    ${GREEN}off${RESET}             Disable notifications globally
+    ${GREEN}status${RESET}          Show notification status
+    ${GREEN}test${RESET}            Send a test notification
+    ${GREEN}setup${RESET}           Run initial setup wizard
+    ${GREEN}project${RESET} <cmd>   Project-specific commands
+    ${GREEN}help${RESET}            Show this help message
+    ${GREEN}version${RESET}         Show version information
+
+${BOLD}PROJECT COMMANDS:${RESET}
+    ${GREEN}project on${RESET}      Enable for current project
+    ${GREEN}project off${RESET}     Disable for current project
+    ${GREEN}project status${RESET}  Check project status
+    ${GREEN}project init${RESET}    Interactive project setup
+
+${BOLD}ALIASES:${RESET}
+    ${CYAN}cn${RESET}  <command>   Shortcut for claude-notify
+    ${CYAN}cnp${RESET} <command>   Shortcut for claude-notify project
+
+${BOLD}EXAMPLES:${RESET}
+    $COMMAND_NAME on            # Enable notifications
+    cn off                      # Disable notifications (using alias)
+    cnp on                      # Enable for current project
+    claude-notify test          # Send test notification
+
+${BOLD}MORE INFO:${RESET}
+    ${DIM}https://github.com/mylee04/claude-notify${RESET}
+
+EOF
+}
+
+# Route commands based on how script was called
+case "$COMMAND_NAME" in
+    "cn")
+        # Called as 'cn' - handle global commands directly
+        case "${1:-status}" in
+            "on"|"off"|"status"|"test"|"setup"|"help"|"version")
+                source "$LIB_DIR/commands/global.sh"
+                handle_global_command "$@"
+                ;;
+            *)
+                error "Unknown command: $1"
+                echo "Try 'cn help' for usage"
+                exit 1
+                ;;
+        esac
+        ;;
+    
+    "cnp")
+        # Called as 'cnp' - handle project commands directly
+        source "$LIB_DIR/commands/project.sh"
+        handle_project_command "$@"
+        ;;
+    
+    "claude-notify"|*)
+        # Called as 'claude-notify' - full command parsing
+        case "${1:-help}" in
+            "on"|"off"|"status"|"test"|"setup")
+                source "$LIB_DIR/commands/global.sh"
+                handle_global_command "$@"
+                ;;
+            "project")
+                shift
+                source "$LIB_DIR/commands/project.sh"
+                handle_project_command "$@"
+                ;;
+            "help"|"-h"|"--help")
+                show_help
+                ;;
+            "version"|"-v"|"--version")
+                show_version
+                ;;
+            *)
+                error "Unknown command: $1"
+                echo "Try 'claude-notify help' for usage"
+                exit 1
+                ;;
+        esac
+        ;;
+esac
