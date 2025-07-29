@@ -65,29 +65,30 @@ cd claude-notify
 ./install.sh
 ```
 
-### Platform-Specific Dependencies
+### Notification Dependencies (Usually Pre-installed)
+
+Claude-notify works out of the box on most systems. For the best experience:
 
 #### macOS
 ```bash
-# Optional but recommended
+# Already included on macOS (uses native notifications)
+# For enhanced notifications (optional):
 brew install terminal-notifier
 ```
 
 #### Linux
 ```bash
-# Ubuntu/Debian
-sudo apt-get install libnotify-bin
-
-# Fedora
-sudo dnf install libnotify
-
-# Arch
-sudo pacman -S libnotify
+# Most Linux desktops have this pre-installed
+# If notifications don't work, install:
+sudo apt-get install libnotify-bin  # Ubuntu/Debian
+sudo dnf install libnotify          # Fedora
+sudo pacman -S libnotify            # Arch
 ```
 
 #### Windows
 ```powershell
-# Optional: Install BurntToast for better notifications
+# Uses built-in Windows notifications
+# For enhanced notifications (optional):
 Install-Module -Name BurntToast -Scope CurrentUser
 ```
 
