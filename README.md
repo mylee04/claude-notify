@@ -42,7 +42,7 @@ Cross-platform desktop notifications for Claude Code - get alerts when tasks com
 
 #### macOS (Homebrew)
 ```bash
-# Tap the repository
+# Add the tap (one-time setup)
 brew tap mylee04/tools
 
 # Install claude-notify
@@ -336,7 +336,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Issues**: [GitHub Issues](https://github.com/mylee04/claude-notify/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/mylee04/claude-notify/discussions)
-- **Email**: mylee04@example.com
+- **Email**: myungeun2dc@gmail.com
 
 ---
 
