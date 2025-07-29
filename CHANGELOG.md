@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive documentation and examples
 
 ### Features
-- Native macOS notifications with customizable titles and sounds
+- Cross-platform desktop notifications (macOS, Linux, Windows)
+- Platform-specific notification methods:
+  - macOS: terminal-notifier or osascript
+  - Linux: notify-send, zenity, or wall
+  - Windows: PowerShell with BurntToast or native notifications
 - Project name detection (git repositories or directory names)
 - Non-invasive integration using Claude Code's existing hook system
 - Easy toggle without losing configuration

@@ -1,21 +1,27 @@
 # 🔔 Claude-Notify
 
-Native macOS notifications for Claude Code - get alerts when tasks complete, errors occur, or input is needed.
+Cross-platform desktop notifications for Claude Code - get alerts when tasks complete, errors occur, or input is needed.
 
 ![Claude-Notify Banner](assets/banner.png)
 
 [![Homebrew](https://img.shields.io/badge/homebrew-supported-orange.svg)](https://brew.sh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-10.14+-blue.svg)](https://www.apple.com/macos)
+[![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
+[![Windows](https://img.shields.io/badge/Windows-supported-blue.svg)](https://www.microsoft.com/windows)
 
 ## ✨ Features
 
-- 🚀 **One-line installation** via Homebrew
-- 🔔 **Native macOS notifications** with sound alerts
+- 🚀 **Cross-platform support** for macOS, Linux, and Windows
+- 🔔 **Native desktop notifications** with platform-specific integration
+- 📦 **Multiple installation methods** (Homebrew, manual script, package managers)
 - 🌐 **Global notifications** for all projects
 - 📁 **Project-specific settings** that override global config
 - ⚡ **Quick aliases** (`cn`, `cnp`) for fast access
-- 🎨 **Beautiful notifications** via terminal-notifier
+- 🎨 **Platform-optimized notifications**:
+  - **macOS**: terminal-notifier or native osascript
+  - **Linux**: notify-send, zenity, or wall
+  - **Windows**: PowerShell with BurntToast or native notifications
 - 🔄 **Easy on/off toggle** without losing configuration
 - 🛡️ **Non-invasive** - uses Claude Code's existing hook system
 
@@ -34,6 +40,7 @@ Native macOS notifications for Claude Code - get alerts when tasks complete, err
 
 ### Install
 
+#### macOS (Homebrew)
 ```bash
 # Tap the repository
 brew tap mylee04/tools
@@ -43,6 +50,43 @@ brew install claude-notify
 
 # Run setup (optional but recommended)
 claude-notify setup
+```
+
+#### Linux & Windows (Universal Installer)
+```bash
+# Download and run the installer
+curl -sSL https://raw.githubusercontent.com/mylee04/claude-notify/main/install.sh | bash
+
+# Or clone and install manually
+git clone https://github.com/mylee04/claude-notify.git
+cd claude-notify
+./install.sh
+```
+
+### Platform-Specific Dependencies
+
+#### macOS
+```bash
+# Optional but recommended
+brew install terminal-notifier
+```
+
+#### Linux
+```bash
+# Ubuntu/Debian
+sudo apt-get install libnotify-bin
+
+# Fedora
+sudo dnf install libnotify
+
+# Arch
+sudo pacman -S libnotify
+```
+
+#### Windows
+```powershell
+# Optional: Install BurntToast for better notifications
+Install-Module -Name BurntToast -Scope CurrentUser
 ```
 
 ### Enable Notifications

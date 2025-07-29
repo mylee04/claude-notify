@@ -1,5 +1,5 @@
 class ClaudeNotify < Formula
-  desc "Native OS notifications for Claude Code"
+  desc "Cross-platform desktop notifications for Claude Code"
   homepage "https://github.com/mylee04/claude-notify"
   url "https://github.com/mylee04/claude-notify/archive/v1.0.0.tar.gz"
   sha256 "PLACEHOLDER_SHA256"  # Will be updated when creating release

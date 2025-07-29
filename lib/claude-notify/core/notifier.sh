@@ -41,31 +41,95 @@ case "$HOOK_TYPE" in
         ;;
 esac
 
-# Function to send notification using terminal-notifier
-send_terminal_notification() {
-    terminal-notifier \
-        -title "$TITLE" \
-        -subtitle "$SUBTITLE" \
-        -message "$MESSAGE" \
-        -sound "$SOUND" \
-        -group "claude-notify-$PROJECT_NAME" \
-        -ignoreDnD \
-        -activate "com.apple.Terminal" \
-        -sender "com.apple.Terminal" \
-        2>/dev/null
+# Detect operating system
+detect_os() {
+    case "$(uname -s)" in
+        Darwin*)    echo "macos" ;;
+        Linux*)     echo "linux" ;;
+        CYGWIN*|MINGW*|MSYS*) echo "windows" ;;
+        *)          echo "unknown" ;;
+    esac
 }
 
-# Function to send notification using osascript
-send_osascript_notification() {
-    osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\" subtitle \"$SUBTITLE\" sound name \"$SOUND\"" 2>/dev/null
+# Function to send notification on macOS
+send_macos_notification() {
+    if command -v terminal-notifier &> /dev/null; then
+        terminal-notifier \
+            -title "$TITLE" \
+            -subtitle "$SUBTITLE" \
+            -message "$MESSAGE" \
+            -sound "$SOUND" \
+            -group "claude-notify-$PROJECT_NAME" \
+            -ignoreDnD \
+            -activate "com.apple.Terminal" \
+            -sender "com.apple.Terminal" \
+            2>/dev/null
+    else
+        osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\" subtitle \"$SUBTITLE\" sound name \"$SOUND\"" 2>/dev/null
+    fi
 }
 
-# Send the notification
-if command -v terminal-notifier &> /dev/null; then
-    send_terminal_notification
-else
-    send_osascript_notification
-fi
+# Function to send notification on Linux
+send_linux_notification() {
+    if command -v notify-send &> /dev/null; then
+        # notify-send is the standard Linux notification tool
+        notify-send "$TITLE" "$MESSAGE" \
+            --urgency=normal \
+            --app-name="Claude-Notify" \
+            --icon=dialog-information \
+            2>/dev/null
+    elif command -v zenity &> /dev/null; then
+        # Fallback to zenity if available
+        zenity --notification \
+            --text="$TITLE\n$MESSAGE" \
+            2>/dev/null
+    else
+        # Last resort: use wall for terminal notification
+        echo "[$TITLE] $MESSAGE" | wall 2>/dev/null
+    fi
+}
+
+# Function to send notification on Windows
+send_windows_notification() {
+    # Try PowerShell with BurntToast if available
+    if command -v powershell &> /dev/null; then
+        powershell -Command "
+            if (Get-Module -ListAvailable -Name BurntToast) {
+                New-BurntToastNotification -Text '$TITLE', '$MESSAGE'
+            } else {
+                Add-Type -AssemblyName System.Windows.Forms
+                \$notification = New-Object System.Windows.Forms.NotifyIcon
+                \$notification.Icon = [System.Drawing.SystemIcons]::Information
+                \$notification.BalloonTipIcon = 'Info'
+                \$notification.BalloonTipTitle = '$TITLE'
+                \$notification.BalloonTipText = '$MESSAGE'
+                \$notification.Visible = \$true
+                \$notification.ShowBalloonTip(10000)
+            }
+        " 2>/dev/null
+    elif command -v msg &> /dev/null; then
+        # Fallback to msg command
+        msg "%USERNAME%" "$TITLE: $MESSAGE" 2>/dev/null
+    fi
+}
+
+# Send notification based on OS
+OS=$(detect_os)
+case "$OS" in
+    macos)
+        send_macos_notification
+        ;;
+    linux)
+        send_linux_notification
+        ;;
+    windows)
+        send_windows_notification
+        ;;
+    *)
+        echo "Unsupported OS: $OS" >&2
+        exit 1
+        ;;
+esac
 
 # Log the notification if log directory exists
 LOG_DIR="$HOME/.claude/logs"

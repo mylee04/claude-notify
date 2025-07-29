@@ -15,25 +15,52 @@ echo "🔔 Claude-Notify Installer"
 echo "========================="
 echo ""
 
-# Check if running on macOS
-if [[ "$(uname)" != "Darwin" ]]; then
-    echo -e "${RED}Error: Claude-Notify currently only supports macOS${RESET}"
-    exit 1
-fi
-
-# Check for terminal-notifier
-echo "Checking dependencies..."
-if ! command -v terminal-notifier &> /dev/null; then
-    echo -e "${YELLOW}Warning: terminal-notifier not found${RESET}"
-    echo "For the best experience, install it with:"
-    echo "  brew install terminal-notifier"
-    echo ""
-    read -p "Continue anyway? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+# Detect OS
+OS=$(uname -s)
+case "$OS" in
+    Darwin*)
+        echo "Detected: macOS"
+        ;;
+    Linux*)
+        echo "Detected: Linux"
+        ;;
+    CYGWIN*|MINGW*|MSYS*)
+        echo "Detected: Windows"
+        ;;
+    *)
+        echo -e "${RED}Error: Unsupported operating system${RESET}"
         exit 1
-    fi
-fi
+        ;;
+esac
+
+# Check for platform-specific notification tools
+echo "Checking dependencies..."
+case "$OS" in
+    Darwin*)
+        if ! command -v terminal-notifier &> /dev/null; then
+            echo -e "${YELLOW}Warning: terminal-notifier not found${RESET}"
+            echo "For the best experience on macOS, install it with:"
+            echo "  brew install terminal-notifier"
+        fi
+        ;;
+    Linux*)
+        if ! command -v notify-send &> /dev/null; then
+            echo -e "${YELLOW}Warning: notify-send not found${RESET}"
+            echo "Install it with your package manager:"
+            echo "  Ubuntu/Debian: sudo apt-get install libnotify-bin"
+            echo "  Fedora: sudo dnf install libnotify"
+            echo "  Arch: sudo pacman -S libnotify"
+        fi
+        ;;
+    CYGWIN*|MINGW*|MSYS*)
+        echo "Windows notifications will use PowerShell"
+        if ! command -v powershell &> /dev/null; then
+            echo -e "${YELLOW}Warning: PowerShell not found${RESET}"
+            echo "For better notifications, install BurntToast:"
+            echo "  Install-Module -Name BurntToast"
+        fi
+        ;;
+esac
 
 # Install to user's home directory
 INSTALL_DIR="$HOME/.claude-notify"
