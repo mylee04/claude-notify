@@ -4,6 +4,7 @@ Cross-platform desktop notifications for Claude Code - get alerts when tasks com
 
 ![Claude-Notify Banner](assets/banner.png)
 
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/mylee04/claude-notify/releases)
 [![Homebrew](https://img.shields.io/badge/homebrew-supported-orange.svg)](https://brew.sh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-10.14+-blue.svg)](https://www.apple.com/macos)
@@ -49,6 +50,9 @@ brew tap mylee04/tools
 
 # Install claude-notify
 brew install claude-notify
+
+# Or install directly without tap:
+brew install mylee04/tools/claude-notify
 
 # Run setup (optional but recommended)
 claude-notify setup
