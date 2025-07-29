@@ -53,3 +53,8 @@ dist/
 
 # Homebrew
 homebrew-tap/
+
+# Development notes
+DEVELOPMENT_JOURNEY.md
+.development-notes/
+.internal/
