@@ -15,6 +15,8 @@ Cross-platform desktop notifications for Claude Code - get alerts when tasks com
 
 - 🚀 **Cross-platform support** for macOS, Linux, and Windows
 - 🔔 **Native desktop notifications** with platform-specific integration
+- 🛡️ **NEW: Bash Command Notifications** - Get notified when Claude needs approval to run commands
+- 🔊 **NEW: Voice Notifications** - Hear when tasks complete with customizable voices
 - 📦 **Multiple installation methods** (Homebrew, manual script, package managers)
 - 🌐 **Global notifications** for all projects
 - 📁 **Project-specific settings** that override global config
@@ -38,6 +40,9 @@ See Claude-Notify in action across different notification types:
 
 ### ❌ Error Notification
 ![Error Notification](assets/notification-error.png)
+
+### 🛡️ Bash Command Approval (NEW!)
+Never miss when Claude is waiting for permission to run a command!
 
 ## 🚀 Quick Start
 
@@ -111,6 +116,34 @@ That's it! You'll now receive notifications when Claude Code completes tasks.
 ## 📖 Usage
 
 Claude-notify provides **two ways** to run every command - use whichever you prefer!
+
+### 🎯 Understanding Global vs Project Settings
+
+Claude-notify uses a **layered configuration system** (like CSS inheritance):
+
+1. **Global Settings** (`cn` commands) - Your default for all projects
+2. **Project Settings** (`cnp` commands) - Override global for specific projects
+
+**How they work together:**
+```bash
+# Example 1: Global ON, no project config
+cn on                    # ✅ All projects get notifications
+
+# Example 2: Global OFF, specific project ON  
+cn off                   # ❌ Notifications off by default
+cd ~/important-project
+cnp on                   # ✅ THIS project still gets notifications!
+
+# Example 3: Different voices for different projects
+cn voice on              # Set global voice to "Samantha"
+cd ~/uk-client && cnp voice on    # Override with "Daniel" (he has a british accent) for this project
+cd ~/fun-game && cnp voice on     # Override with "Good News" for this project
+```
+
+**Key Points:**
+- Project settings OVERRIDE global settings (not disable them)
+- Each project can have its own configuration
+- Remove project settings with `cnp off` to use global defaults again
 
 ### Global Commands
 
@@ -203,45 +236,148 @@ cn on
 
 ## ⚙️ Configuration
 
-### Hook System
+### Hook System (Updated for Claude Code v2.0+)
 
-Claude-Notify uses Claude Code's hook system. When enabled, it creates:
+Claude-Notify uses Claude Code's hook system via `settings.json` files:
 
-**Global**: `~/.claude/hooks.json`
+**Global**: `~/.claude/settings.json`
 ```json
 {
+  "model": "opus",
   "hooks": {
-    "stop": {
-      "description": "Notify when Claude completes a task",
-      "command": "~/.claude/notifications/notify.sh stop"
-    },
-    "notification": {
-      "description": "Notify when Claude needs input",
-      "command": "~/.claude/notifications/notify.sh notification"
-    }
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/notifications/notify.sh notification"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/notifications/notify.sh stop"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/notifications/notify.sh PreToolUse"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
-**Project**: `.claude/hooks.json` (in project root)
+**Project**: `.claude/settings.json` (in project root)
 ```json
 {
   "hooks": {
-    "stop": {
-      "description": "Project-specific notification",
-      "command": "~/.claude/notifications/notify.sh stop completed 'project-name'"
-    }
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/notifications/notify.sh stop completed 'project-name'"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
+
+> **Important Note**: Claude Code uses `settings.json` (not `hooks.json`) for hook configuration. The format is array-based with capitalized hook names. Claude-notify automatically handles this for you!
 
 ### Notification Types
 
 - ✅ **Task Complete**: When Claude finishes a task
 - 🔔 **Input Required**: When Claude needs your input
+- 🛡️ **Bash Command Approval**: When Claude needs permission to run a command (NEW!)
 - ❌ **Error**: When an error occurs (future feature)
 
 ## 🛠️ Advanced Usage
+
+### 🔊 Voice Notifications (macOS)
+
+Add audio feedback to your notifications using macOS text-to-speech:
+
+```bash
+# Enable voice notifications
+cn voice on
+
+# Choose from various voices:
+# - Samantha (default)
+# - Alex, Daniel, Victoria (standard voices)
+# - Whisper, Good News, Bad News (novelty voices)
+
+# Disable voice notifications
+cn voice off
+
+# Check voice status
+cn voice status
+```
+
+When enabled, you'll hear:
+- "Master, your task in [project] is complete"
+- "Master, I need your input in [project]"
+- "Master, there was an error in [project]"
+
+**To change/switch voices anytime:**
+```bash
+# Currently using Whisper? Want to switch to Daniel?
+cn voice on              # Just run this again!
+# It will show all voices and ask "Which voice would you like?"
+# Type: Daniel
+
+# Currently using Alex? Want to switch to Oliver?  
+cn voice on              # Run again!
+# Type: Oliver
+
+# Project-specific voice changes work the same way
+cnp voice on             # Shows voices, pick a new one!
+
+# Quick switch via command line (advanced):
+echo "Samantha" > ~/.claude/notifications/voice-enabled    # Global
+echo "Good News" > .claude/voice                           # Project
+```
+
+**Available voices to choose from:**
+- **American**: Samantha, Alex, Fred, Victoria, Ava
+- **British**: Daniel, Oliver, Kate, Serena
+- **Other accents**: Fiona (Scottish), Moira (Irish), Karen (Australian)
+- **Fun voices**: Whisper, Good News, Bad News, Bells, Bubbles
+
+**Project-Specific Voices** (Perfect for multitasking!):
+```bash
+# Set a unique voice for current project
+cnp voice on
+
+# Example: Different voices for different projects
+# - "Whisper" for secret-project
+# - "Daniel" (British) for uk-client
+# - "Good News" for fun-side-project
+
+# Remove project voice setting
+cnp voice off
+
+# Check project voice
+cnp voice status
+```
 
 ### Check Detailed Status
 
@@ -286,6 +422,15 @@ All notifications are logged to:
    ```bash
    cn test
    ```
+
+### Bash Command Notifications Not Working?
+
+The PreToolUse hook for bash command notifications requires:
+1. Claude Code to be restarted after enabling (hooks load at startup)
+2. Commands that trigger approval dialogs (not all commands do)
+3. Proper `settings.json` format (claude-notify handles this automatically)
+
+**Note**: This feature depends on Claude Code's hook implementation and may vary by version.
 
 ### Command Not Found?
 

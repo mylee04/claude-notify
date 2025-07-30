@@ -23,6 +23,9 @@ handle_global_command() {
         "setup")
             run_setup_wizard "$@"
             ;;
+        "voice")
+            handle_voice_command "$@"
+            ;;
         *)
             error "Unknown command: $command"
             exit 1
@@ -40,40 +43,22 @@ enable_notifications_global() {
     # Check if already enabled
     if is_enabled_globally; then
         warning "Global notifications are already enabled"
-        info "Config location: $GLOBAL_HOOKS_FILE"
+        info "Config location: $GLOBAL_SETTINGS_FILE"
         return 0
     fi
     
-    # Check if disabled file exists
-    if [[ -f "$GLOBAL_HOOKS_DISABLED" ]]; then
-        info "Restoring previous configuration..."
-        mv "$GLOBAL_HOOKS_DISABLED" "$GLOBAL_HOOKS_FILE"
-        success "Global notifications ENABLED"
-    else
-        info "Creating new configuration..."
-        mkdir -p "$(dirname "$GLOBAL_HOOKS_FILE")"
-        
-        # Get notification script path
-        local notify_script=$(get_notify_script)
-        
-        # Create hooks configuration
-        cat > "$GLOBAL_HOOKS_FILE" << EOF
-{
-  "hooks": {
-    "stop": {
-      "description": "Notify when Claude completes a task",
-      "command": "$notify_script stop"
-    },
-    "notification": {
-      "description": "Notify when Claude needs input",
-      "command": "$notify_script notification"
-    }
-  }
-}
-EOF
-        success "Global notifications ENABLED"
-        info "Config created at: $GLOBAL_HOOKS_FILE"
+    info "Enabling notifications in settings.json..."
+    
+    # Backup existing settings
+    if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
+        backup_config "$GLOBAL_SETTINGS_FILE"
     fi
+    
+    # Enable hooks in settings.json
+    enable_hooks_in_settings
+    
+    success "Global notifications ENABLED"
+    info "Config updated: $GLOBAL_SETTINGS_FILE"
     
     # Send test notification
     echo ""
@@ -86,18 +71,21 @@ disable_notifications_global() {
     header "${MUTE} Disabling Claude-Notify Globally"
     echo ""
     
-    if [[ ! -f "$GLOBAL_HOOKS_FILE" ]]; then
+    if ! is_enabled_globally; then
         warning "Global notifications are already disabled"
         return 0
     fi
     
     # Backup before disabling
-    backup_config "$GLOBAL_HOOKS_FILE"
+    if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
+        backup_config "$GLOBAL_SETTINGS_FILE"
+    fi
     
-    # Move to disabled
-    mv "$GLOBAL_HOOKS_FILE" "$GLOBAL_HOOKS_DISABLED"
+    # Disable hooks in settings.json
+    disable_hooks_in_settings
+    
     success "Global notifications DISABLED"
-    info "Configuration saved to: $GLOBAL_HOOKS_DISABLED"
+    info "Hooks removed from: $GLOBAL_SETTINGS_FILE"
 }
 
 # Show current status
@@ -216,4 +204,49 @@ check_for_updates() {
     # For now, just show how to update
     echo "To update claude-notify, run:"
     echo "  ${CYAN}brew upgrade claude-notify${RESET}"
+}
+
+# Handle voice commands
+handle_voice_command() {
+    local subcommand="${1:-status}"
+    
+    case "$subcommand" in
+        "on")
+            header "${SPEAKER} Enabling Voice Notifications"
+            echo ""
+            
+            # Show available voices
+            info "Available English voices:"
+            say -v ? | grep "en_" | head -10 | awk '{print "  - " $1}' | column
+            echo ""
+            
+            # Ask for voice preference
+            read -p "Which voice would you like? (default: Samantha) " voice
+            voice=${voice:-Samantha}
+            
+            # Enable voice
+            mkdir -p ~/.claude/notifications
+            echo "$voice" > ~/.claude/notifications/voice-enabled
+            success "Voice notifications ENABLED with voice: $voice"
+            
+            # Test it
+            say -v "$voice" "Voice notifications enabled, Master" &
+            ;;
+            
+        "off")
+            header "${MUTE} Disabling Voice Notifications"
+            echo ""
+            rm -f ~/.claude/notifications/voice-enabled
+            success "Voice notifications DISABLED"
+            ;;
+            
+        "status"|*)
+            if [[ -f ~/.claude/notifications/voice-enabled ]]; then
+                local current_voice=$(cat ~/.claude/notifications/voice-enabled)
+                status_enabled "Voice notifications: ENABLED (using $current_voice)"
+            else
+                status_disabled "Voice notifications: DISABLED"
+            fi
+            ;;
+    esac
 }

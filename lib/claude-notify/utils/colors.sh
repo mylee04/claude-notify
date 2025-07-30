@@ -33,6 +33,7 @@ if [[ -t 1 ]] && [[ "$(tput colors)" -ge 8 ]]; then
     GLOBE="🌐"
     FOLDER="📂"
     ROCKET="🚀"
+    SPEAKER="🔊"
 else
     # No colors
     BLACK=""
@@ -57,6 +58,7 @@ else
     GLOBE="[G]"
     FOLDER="[D]"
     ROCKET="[>]"
+    SPEAKER="[S]"
 fi
 
 # Helper functions for colored output
