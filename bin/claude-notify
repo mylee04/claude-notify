@@ -6,7 +6,7 @@
 set -e
 
 # Version
-VERSION="2.0.0"
+VERSION="1.1.0"
 
 # Determine the directory where the script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
