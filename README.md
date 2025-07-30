@@ -63,6 +63,33 @@ brew install mylee04/tools/claude-notify
 claude-notify setup
 ```
 
+### Upgrade to Latest Version
+
+**Already have claude-notify installed?** Update to get new features:
+
+```bash
+# Update Homebrew formulae
+brew update
+
+# Upgrade claude-notify to latest version
+brew upgrade claude-notify
+
+# Check your version
+cn version
+```
+
+**New features not working?** You might have an older version:
+```bash
+# Check current version
+cn version
+
+# If it shows v1.0.x, upgrade to v1.1.0+ for:
+# - Voice notifications (cn voice on)
+# - settings.json support
+# - Project-specific voices (cnp voice on)
+brew upgrade claude-notify
+```
+
 #### Linux & Windows (Universal Installer)
 ```bash
 # Download and run the installer
