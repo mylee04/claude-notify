@@ -16,17 +16,35 @@ Cross-platform desktop notifications for Claude Code - get alerts when tasks com
 - 🚀 **Cross-platform support** for macOS, Linux, and Windows
 - 🔔 **Native desktop notifications** with platform-specific integration
 - 🛡️ **NEW: Bash Command Notifications** - Get notified when Claude needs approval to run commands
-- 🔊 **NEW: Voice Notifications** - Hear when tasks complete with customizable voices
-- 📦 **Multiple installation methods** (Homebrew, manual script, package managers)
+- 🔊 **NEW: Voice Notifications** - Hear when tasks complete with customizable voices (macOS fully supported, basic support for Linux/Windows)
+- 📦 **Multiple installation methods** (Homebrew for macOS, universal installer for others)
 - 🌐 **Global notifications** for all projects
 - 📁 **Project-specific settings** that override global config
 - ⚡ **Quick aliases** (`cn`, `cnp`) for fast access
 - 🎨 **Platform-optimized notifications**:
-  - **macOS**: terminal-notifier or native osascript
-  - **Linux**: notify-send, zenity, or wall
-  - **Windows**: PowerShell with BurntToast or native notifications
+  - **macOS**: terminal-notifier or native osascript ✅ 
+  - **Linux**: notify-send, zenity, or wall ✅
+  - **Windows**: Native PowerShell toast notifications ✅
 - 🔄 **Easy on/off toggle** without losing configuration
 - 🛡️ **Non-invasive** - uses Claude Code's existing hook system
+
+## 🖥️ Platform Support
+
+| Feature | macOS | Linux | Windows |
+|---------|-------|-------|---------|
+| Desktop Notifications | ✅ Full | ✅ Full* | 🧪 Full** |
+| Voice Notifications | ✅ Full | ⚠️ Basic*** | 🧪 Full**** |
+| Installation | ✅ Homebrew | ✅ Script | 🧪 PowerShell |
+| Project Settings | ✅ Full | ✅ Full | 🧪 Full |
+| Quick Aliases | ✅ Full | ✅ Full | 🧪 Full |
+| Native Implementation | ✅ Tested | ⚠️ Partial | 🧪 Untested |
+
+**Legend**: ✅ = Tested & Working | ⚠️ = Basic Support | 🧪 = Experimental/Untested
+
+\* Requires libnotify (usually pre-installed)  
+\** Windows 10/11 toast notifications via PowerShell  
+\*** Voice: Linux (espeak/festival - optional)  
+\**** Voice: Windows SAPI with multiple voices (David, Zira, Mark)
 
 ## 📸 Screenshots
 
@@ -90,7 +108,20 @@ cn version
 brew upgrade claude-notify
 ```
 
-#### Linux & Windows (Universal Installer)
+#### Windows (PowerShell) - Experimental ⚠️
+```powershell
+# Download and install
+git clone https://github.com/mylee04/claude-notify.git
+cd claude-notify
+powershell -ExecutionPolicy Bypass -File install-windows.ps1
+
+# Or run directly from PowerShell
+irm https://raw.githubusercontent.com/mylee04/claude-notify/main/install-windows.ps1 | iex
+```
+
+> **Note**: Windows support is experimental and hasn't been fully tested yet. If you're a Windows user, please [report any issues](https://github.com/mylee04/claude-notify/issues) or let me know if it works! Your feedback will help improve Windows support. 🙏
+
+#### Linux (Bash)
 ```bash
 # Download and run the installer
 curl -sSL https://raw.githubusercontent.com/mylee04/claude-notify/main/install.sh | bash
@@ -474,6 +505,22 @@ source ~/.zshrc  # or ~/.bashrc
 - Ensure you're in the project root directory
 - Check for `.claude/hooks.json` in the project
 - Project settings override global settings
+
+## 🧪 Windows Testers Needed!
+
+**Are you a Windows user?** We need your help! The Windows implementation is brand new and untested. 
+
+Please test and report:
+- ✅ What works well
+- ❌ What doesn't work
+- 💡 Any error messages
+- 🖥️ Your Windows version (10, 11, etc.)
+
+**How to report**: 
+- [Open an issue](https://github.com/mylee04/claude-notify/issues/new?title=Windows%20Test%20Report&body=Windows%20Version:%20%0AWhat%20works:%20%0AWhat%20doesn't:%20%0AError%20messages:%20)
+- Or email: myungeun2dc@gmail.com
+
+Your feedback will make claude-notify better for all Windows users! 🙏
 
 ## 🤝 Contributing
 
