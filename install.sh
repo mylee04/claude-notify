@@ -35,6 +35,24 @@ esac
 
 # Check for platform-specific notification tools
 echo "Checking dependencies..."
+
+# Check for jq (required for JSON parsing)
+if ! command -v jq &> /dev/null; then
+    echo -e "${YELLOW}Warning: jq not found (required for status detection)${RESET}"
+    echo "Install it with:"
+    case "$OS" in
+        Darwin*)
+            echo "  brew install jq"
+            ;;
+        Linux*)
+            echo "  Ubuntu/Debian: sudo apt-get install jq"
+            echo "  Fedora: sudo dnf install jq"
+            echo "  Arch: sudo pacman -S jq"
+            ;;
+    esac
+    echo ""
+fi
+
 case "$OS" in
     Darwin*)
         if ! command -v terminal-notifier &> /dev/null; then

@@ -138,6 +138,9 @@ Claude-notify works out of the box on most systems. For the best experience:
 
 #### macOS
 ```bash
+# Required for status detection:
+brew install jq
+
 # Already included on macOS (uses native notifications)
 # For enhanced notifications (optional):
 brew install terminal-notifier
@@ -145,6 +148,11 @@ brew install terminal-notifier
 
 #### Linux
 ```bash
+# Required for status detection:
+sudo apt-get install jq              # Ubuntu/Debian
+sudo dnf install jq                  # Fedora
+sudo pacman -S jq                    # Arch
+
 # Most Linux desktops have this pre-installed
 # If notifications don't work, install:
 sudo apt-get install libnotify-bin  # Ubuntu/Debian

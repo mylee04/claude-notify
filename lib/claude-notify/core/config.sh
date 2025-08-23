@@ -44,9 +44,15 @@ is_enabled() {
 # Check if notifications are enabled globally
 is_enabled_globally() {
     # Check new settings.json format first
-    if [[ -f "$GLOBAL_SETTINGS_FILE" ]] && command -v jq &> /dev/null; then
-        jq -e '.hooks != null and .hooks != {}' "$GLOBAL_SETTINGS_FILE" &>/dev/null
-        return $?
+    if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
+        if command -v jq &> /dev/null; then
+            jq -e '.hooks != null and .hooks != {}' "$GLOBAL_SETTINGS_FILE" &>/dev/null
+            return $?
+        else
+            # Fallback: check if hooks exist in the file using grep
+            grep -q '"hooks"' "$GLOBAL_SETTINGS_FILE" 2>/dev/null
+            return $?
+        fi
     fi
     # Fall back to legacy hooks.json
     [[ -f "$GLOBAL_HOOKS_FILE" ]]
@@ -334,9 +340,15 @@ is_enabled_project_settings() {
     local project_root=$(get_project_root 2>/dev/null || echo "$PWD")
     local project_settings="$project_root/$PROJECT_SETTINGS_FILE"
     
-    if [[ -f "$project_settings" ]] && command -v jq &> /dev/null; then
-        jq -e '.hooks != null and .hooks != {}' "$project_settings" &>/dev/null
-        return $?
+    if [[ -f "$project_settings" ]]; then
+        if command -v jq &> /dev/null; then
+            jq -e '.hooks != null and .hooks != {}' "$project_settings" &>/dev/null
+            return $?
+        else
+            # Fallback: check if hooks exist in the file using grep
+            grep -q '"hooks"' "$project_settings" 2>/dev/null
+            return $?
+        fi
     fi
     return 1
 }
