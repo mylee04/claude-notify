@@ -60,9 +60,6 @@ send_macos_notification() {
             -message "$MESSAGE" \
             -sound "$SOUND" \
             -group "claude-notify-$PROJECT_NAME" \
-            -ignoreDnD \
-            -activate "com.apple.Terminal" \
-            -sender "com.apple.Terminal" \
             2>/dev/null
     else
         osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\" subtitle \"$SUBTITLE\" sound name \"$SOUND\"" 2>/dev/null
@@ -118,6 +115,13 @@ OS=$(detect_os)
 case "$OS" in
     macos)
         send_macos_notification
+        # Add voice notification if enabled
+        if [[ -f "$HOME/.claude-notify/config/voice.conf" ]]; then
+            VOICE=$(cat "$HOME/.claude-notify/config/voice.conf" 2>/dev/null || echo "")
+            if [[ -n "$VOICE" ]]; then
+                say -v "$VOICE" "$MESSAGE" &
+            fi
+        fi
         ;;
     linux)
         send_linux_notification
