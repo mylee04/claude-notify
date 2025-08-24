@@ -1,0 +1,42 @@
+{
+  "_comment": "Example settings.json - The installer will create proper paths for your system",
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "",
+        "_description": "Triggers when Claude needs user input",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude-notify/lib/claude-notify/core/notifier.sh notification"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "^(?!.*Bash).*$",
+        "_description": "Triggers when tasks complete (excludes Bash commands to reduce noise)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude-notify/lib/claude-notify/core/notifier.sh stop"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "_description": "Example: Triggers before Bash commands (disabled by default - too noisy)",
+        "_enabled": false,
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude-notify/lib/claude-notify/core/notifier.sh PreToolUse"
+          }
+        ]
+      }
+    ]
+  }
+}
