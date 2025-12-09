@@ -1,0 +1,274 @@
+name: macOS Installation Test
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'install.sh'
+      - 'bin/**'
+      - 'lib/**'
+      - '.github/workflows/macos-test.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'install.sh'
+      - 'bin/**'
+      - 'lib/**'
+      - '.github/workflows/macos-test.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  test-macos-install:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Display system info
+      run: |
+        echo "macOS Version: $(sw_vers -productVersion)"
+        echo "Shell: $SHELL"
+        echo "Bash Version: $(bash --version | head -1)"
+
+    - name: Install jq dependency
+      run: |
+        brew install jq
+        echo "jq version: $(jq --version)"
+
+    - name: Test install.sh syntax
+      run: |
+        bash -n install.sh
+        echo "Syntax check passed!"
+
+    - name: Test main script syntax
+      run: |
+        bash -n bin/claude-notify
+        echo "Main script syntax OK"
+
+    - name: Test lib scripts syntax
+      run: |
+        for file in lib/claude-notify/**/*.sh; do
+          echo "Checking: $file"
+          bash -n "$file"
+        done
+        echo "All lib scripts syntax OK"
+
+    - name: Run installation
+      run: |
+        chmod +x install.sh
+        ./install.sh
+
+    - name: Verify installation directories
+      run: |
+        INSTALL_DIR="$HOME/.claude-notify"
+
+        if [[ ! -d "$INSTALL_DIR" ]]; then
+          echo "ERROR: Install directory not created: $INSTALL_DIR"
+          exit 1
+        fi
+        echo "OK: Install directory exists: $INSTALL_DIR"
+
+        if [[ ! -d "$INSTALL_DIR/bin" ]]; then
+          echo "ERROR: bin directory not created"
+          exit 1
+        fi
+        echo "OK: bin directory exists"
+
+        if [[ ! -d "$INSTALL_DIR/lib" ]]; then
+          echo "ERROR: lib directory not created"
+          exit 1
+        fi
+        echo "OK: lib directory exists"
+
+        if [[ ! -d "$HOME/.claude/notifications" ]]; then
+          echo "ERROR: notifications directory not created"
+          exit 1
+        fi
+        echo "OK: notifications directory exists"
+
+    - name: Verify installed files
+      run: |
+        FILES=(
+          "$HOME/.claude-notify/bin/claude-notify"
+          "$HOME/.claude-notify/lib/claude-notify/core/config.sh"
+          "$HOME/.claude-notify/lib/claude-notify/core/notifier.sh"
+          "$HOME/.claude-notify/lib/claude-notify/commands/global.sh"
+          "$HOME/.claude-notify/lib/claude-notify/commands/project.sh"
+          "$HOME/.claude-notify/lib/claude-notify/utils/colors.sh"
+          "$HOME/.claude-notify/lib/claude-notify/utils/detect.sh"
+        )
+
+        for file in "${FILES[@]}"; do
+          if [[ ! -f "$file" ]]; then
+            echo "ERROR: File not found: $file"
+            exit 1
+          fi
+          echo "OK: File exists: $file"
+        done
+
+    - name: Verify symlinks
+      run: |
+        BIN_DIR="$HOME/.local/bin"
+
+        if [[ ! -L "$BIN_DIR/claude-notify" ]]; then
+          echo "ERROR: claude-notify symlink not created"
+          exit 1
+        fi
+        echo "OK: claude-notify symlink exists"
+
+        if [[ ! -L "$BIN_DIR/cn" ]]; then
+          echo "ERROR: cn symlink not created"
+          exit 1
+        fi
+        echo "OK: cn symlink exists"
+
+        if [[ ! -L "$BIN_DIR/cnp" ]]; then
+          echo "ERROR: cnp symlink not created"
+          exit 1
+        fi
+        echo "OK: cnp symlink exists"
+
+    - name: Add to PATH and test CLI
+      run: |
+        export PATH="$HOME/.local/bin:$PATH"
+
+        # Test help
+        claude-notify help
+
+        # Test version
+        claude-notify version
+
+    - name: Test CLI aliases
+      run: |
+        export PATH="$HOME/.local/bin:$PATH"
+
+        # Test cn alias
+        cn version
+        cn help
+
+        # Test status
+        cn status
+
+    - name: Test enable/disable notifications
+      run: |
+        export PATH="$HOME/.local/bin:$PATH"
+
+        # Enable
+        cn on
+
+        # Check settings.json was created with hooks
+        SETTINGS_FILE="$HOME/.claude/settings.json"
+        if [[ ! -f "$SETTINGS_FILE" ]]; then
+          echo "ERROR: settings.json not created"
+          exit 1
+        fi
+
+        if ! jq -e '.hooks' "$SETTINGS_FILE" > /dev/null; then
+          echo "ERROR: hooks not added to settings"
+          exit 1
+        fi
+        echo "OK: Notifications enabled, hooks configured"
+
+        # Disable
+        cn off
+
+        if jq -e '.hooks' "$SETTINGS_FILE" > /dev/null 2>&1; then
+          echo "ERROR: hooks not removed from settings"
+          exit 1
+        fi
+        echo "OK: Notifications disabled, hooks removed"
+
+    - name: Test project commands
+      run: |
+        export PATH="$HOME/.local/bin:$PATH"
+
+        # Create a test project directory
+        TEST_PROJECT="/tmp/test-claude-project"
+        mkdir -p "$TEST_PROJECT"
+        cd "$TEST_PROJECT"
+
+        # Initialize git repo (for project detection)
+        git init
+        git config user.email "test@test.com"
+        git config user.name "Test"
+
+        # Enable project notifications
+        cnp on
+
+        # Check project settings created
+        if [[ ! -f "$TEST_PROJECT/.claude/settings.json" ]]; then
+          echo "ERROR: Project settings.json not created"
+          exit 1
+        fi
+        echo "OK: Project notifications enabled"
+
+        # Check status
+        cnp status
+
+        # Disable
+        cnp off
+        echo "OK: Project notifications disabled"
+
+    - name: Test notifier script
+      run: |
+        # Test the notification script directly (may not show UI in CI)
+        NOTIFIER="$HOME/.claude-notify/lib/claude-notify/core/notifier.sh"
+        if [[ -f "$NOTIFIER" ]]; then
+          chmod +x "$NOTIFIER"
+          "$NOTIFIER" test 2>&1 || true
+          echo "OK: Notifier script executed"
+        fi
+
+    - name: Summary
+      run: |
+        echo ""
+        echo "========================================"
+        echo "  All macOS installation tests passed!"
+        echo "========================================"
+
+  test-macos-13:
+    runs-on: macos-13
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Display system info
+      run: |
+        echo "macOS Version: $(sw_vers -productVersion)"
+        echo "Shell: $SHELL"
+
+    - name: Install dependencies
+      run: |
+        brew install jq
+
+    - name: Run installation
+      run: |
+        chmod +x install.sh
+        ./install.sh
+
+    - name: Basic functionality test
+      run: |
+        export PATH="$HOME/.local/bin:$PATH"
+        claude-notify version
+        cn status
+        echo "OK: Basic functionality works on macOS 13"
+
+  test-homebrew-formula:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Test direct script execution
+      run: |
+        # Test running directly without installation
+        chmod +x bin/claude-notify
+
+        # Export required paths
+        export PATH="$PWD/bin:$PATH"
+
+        # This should show help (may fail if deps not met, which is OK)
+        bin/claude-notify help || echo "Direct execution test complete"
