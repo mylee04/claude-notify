@@ -149,10 +149,10 @@ function Send-Notification {
     )
 
     $icon = switch ($Type) {
-        "success" { "Information" }
+        "success" { "Info" }
         "error" { "Error" }
         "warning" { "Warning" }
-        default { "Information" }
+        default { "Info" }
     }
 
     # Try BurntToast first
