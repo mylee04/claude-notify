@@ -25,7 +25,15 @@ case "$OS" in
         echo "Detected: Linux"
         ;;
     CYGWIN*|MINGW*|MSYS*)
-        echo "Detected: Windows"
+        echo "Detected: Windows (Git Bash/MSYS)"
+        echo ""
+        echo -e "${YELLOW}Note: For native Windows support, please use the PowerShell installer:${RESET}"
+        echo "  powershell -ExecutionPolicy Bypass -File install-windows.ps1"
+        echo ""
+        echo "Or download and run directly:"
+        echo "  irm https://raw.githubusercontent.com/mylee04/claude-notify/main/install-windows.ps1 | iex"
+        echo ""
+        exit 1
         ;;
     *)
         echo -e "${RED}Error: Unsupported operating system${RESET}"
