@@ -1,0 +1,220 @@
+name: Windows Installation Test
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'install-windows.ps1'
+      - '.github/workflows/windows-test.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'install-windows.ps1'
+      - '.github/workflows/windows-test.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  test-windows-install:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Display PowerShell version
+      run: |
+        Write-Host "PowerShell Version: $($PSVersionTable.PSVersion)"
+        Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
+
+    - name: Test install script syntax
+      run: |
+        $errors = $null
+        $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content -Path "install-windows.ps1" -Raw), [ref]$errors)
+        if ($errors.Count -gt 0) {
+          Write-Host "Syntax errors found:" -ForegroundColor Red
+          $errors | ForEach-Object { Write-Host "  Line $($_.Token.StartLine): $($_.Message)" -ForegroundColor Red }
+          exit 1
+        }
+        Write-Host "Syntax check passed!" -ForegroundColor Green
+
+    - name: Run installation
+      run: |
+        # Run installer in silent mode
+        powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Silent
+
+    - name: Verify installation directories
+      run: |
+        $installDir = "$env:USERPROFILE\.claude-notify"
+        $claudeHome = "$env:USERPROFILE\.claude"
+
+        # Check directories exist
+        if (-not (Test-Path $installDir)) {
+          Write-Host "ERROR: Install directory not created: $installDir" -ForegroundColor Red
+          exit 1
+        }
+        Write-Host "OK: Install directory exists: $installDir" -ForegroundColor Green
+
+        if (-not (Test-Path "$installDir\bin")) {
+          Write-Host "ERROR: bin directory not created" -ForegroundColor Red
+          exit 1
+        }
+        Write-Host "OK: bin directory exists" -ForegroundColor Green
+
+        if (-not (Test-Path "$installDir\lib")) {
+          Write-Host "ERROR: lib directory not created" -ForegroundColor Red
+          exit 1
+        }
+        Write-Host "OK: lib directory exists" -ForegroundColor Green
+
+        if (-not (Test-Path "$claudeHome\notifications")) {
+          Write-Host "ERROR: notifications directory not created" -ForegroundColor Red
+          exit 1
+        }
+        Write-Host "OK: notifications directory exists" -ForegroundColor Green
+
+    - name: Verify installed files
+      run: |
+        $files = @(
+          "$env:USERPROFILE\.claude-notify\lib\ClaudeNotify.psm1",
+          "$env:USERPROFILE\.claude-notify\bin\claude-notify.ps1",
+          "$env:USERPROFILE\.claude-notify\bin\cn.ps1",
+          "$env:USERPROFILE\.claude-notify\bin\cnp.ps1",
+          "$env:USERPROFILE\.claude\notifications\notify.ps1"
+        )
+
+        foreach ($file in $files) {
+          if (-not (Test-Path $file)) {
+            Write-Host "ERROR: File not found: $file" -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "OK: File exists: $file" -ForegroundColor Green
+        }
+
+    - name: Test module import
+      run: |
+        Import-Module "$env:USERPROFILE\.claude-notify\lib\ClaudeNotify.psm1" -Force
+
+        # Check exported functions
+        $functions = @('Invoke-ClaudeNotify', 'Send-Notification', 'Enable-Notifications', 'Disable-Notifications', 'Show-Status')
+        foreach ($func in $functions) {
+          if (-not (Get-Command $func -ErrorAction SilentlyContinue)) {
+            Write-Host "ERROR: Function not exported: $func" -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "OK: Function exported: $func" -ForegroundColor Green
+        }
+
+    - name: Test CLI commands (help)
+      run: |
+        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" help
+
+    - name: Test CLI commands (version)
+      run: |
+        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" version
+
+    - name: Test CLI commands (status)
+      run: |
+        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" status
+
+    - name: Test enable/disable notifications
+      run: |
+        # Enable
+        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" on
+
+        # Check settings.json was created with hooks
+        $settingsFile = "$env:USERPROFILE\.claude\settings.json"
+        if (-not (Test-Path $settingsFile)) {
+          Write-Host "ERROR: settings.json not created" -ForegroundColor Red
+          exit 1
+        }
+
+        $settings = Get-Content $settingsFile -Raw | ConvertFrom-Json
+        if (-not $settings.hooks) {
+          Write-Host "ERROR: hooks not added to settings" -ForegroundColor Red
+          exit 1
+        }
+        Write-Host "OK: Notifications enabled, hooks configured" -ForegroundColor Green
+
+        # Disable
+        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" off
+
+        $settings = Get-Content $settingsFile -Raw | ConvertFrom-Json
+        if ($settings.hooks) {
+          Write-Host "ERROR: hooks not removed from settings" -ForegroundColor Red
+          exit 1
+        }
+        Write-Host "OK: Notifications disabled, hooks removed" -ForegroundColor Green
+
+    - name: Test project commands
+      run: |
+        # Create a test project directory
+        $testProject = "$env:TEMP\test-claude-project"
+        New-Item -ItemType Directory -Path $testProject -Force | Out-Null
+        Set-Location $testProject
+
+        # Initialize git repo (for project detection)
+        git init
+        git config user.email "test@test.com"
+        git config user.name "Test"
+
+        # Enable project notifications
+        & "$env:USERPROFILE\.claude-notify\bin\cnp.ps1" on
+
+        # Check project settings created
+        if (-not (Test-Path "$testProject\.claude\settings.json")) {
+          Write-Host "ERROR: Project settings.json not created" -ForegroundColor Red
+          exit 1
+        }
+        Write-Host "OK: Project notifications enabled" -ForegroundColor Green
+
+        # Check status
+        & "$env:USERPROFILE\.claude-notify\bin\cnp.ps1" status
+
+        # Disable
+        & "$env:USERPROFILE\.claude-notify\bin\cnp.ps1" off
+        Write-Host "OK: Project notifications disabled" -ForegroundColor Green
+
+    - name: Test notification script
+      run: |
+        # Test the notification script directly (won't show UI in CI but should run without error)
+        & "$env:USERPROFILE\.claude\notifications\notify.ps1" "test" 2>&1
+        Write-Host "OK: Notification script executed" -ForegroundColor Green
+
+    - name: Test uninstall
+      run: |
+        powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Uninstall
+
+        if (Test-Path "$env:USERPROFILE\.claude-notify") {
+          Write-Host "ERROR: Install directory not removed" -ForegroundColor Red
+          exit 1
+        }
+        Write-Host "OK: Uninstall completed successfully" -ForegroundColor Green
+
+    - name: Summary
+      run: |
+        Write-Host ""
+        Write-Host "========================================" -ForegroundColor Green
+        Write-Host "  All Windows installation tests passed!" -ForegroundColor Green
+        Write-Host "========================================" -ForegroundColor Green
+
+  test-windows-2019:
+    runs-on: windows-2019
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Display system info
+      run: |
+        Write-Host "PowerShell Version: $($PSVersionTable.PSVersion)"
+        Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
+
+    - name: Run installation
+      run: |
+        powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Silent
+
+    - name: Basic functionality test
+      run: |
+        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" version
+        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" status
+        Write-Host "OK: Basic functionality works on Windows Server 2019" -ForegroundColor Green
