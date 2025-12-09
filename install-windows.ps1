@@ -110,6 +110,12 @@ $script:SettingsFile = "$script:ClaudeHome\settings.json"
 $script:NotificationsDir = "$script:ClaudeHome\notifications"
 $script:VoiceFile = "$script:NotificationsDir\voice-enabled"
 
+# Helper functions for colored output
+function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
+function Write-Info { param([string]$Message) Write-Host "[i] $Message" -ForegroundColor Cyan }
+function Write-Warning { param([string]$Message) Write-Host "[!] $Message" -ForegroundColor Yellow }
+function Write-Header { param([string]$Message) Write-Host "`n$Message" -ForegroundColor White }
+
 function Test-GitInstalled {
     $null = Get-Command git -ErrorAction SilentlyContinue
     return $?
