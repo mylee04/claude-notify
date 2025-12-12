@@ -46,11 +46,13 @@ is_enabled_globally() {
     # Check new settings.json format first
     if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
         if command -v jq &> /dev/null; then
-            jq -e '.hooks != null and .hooks != {}' "$GLOBAL_SETTINGS_FILE" &>/dev/null
+            # Check for claude-notify specific hooks (Notification or Stop events)
+            # Not just any hooks - other tools may add their own hooks
+            jq -e '(.hooks.Notification != null) or (.hooks.Stop != null)' "$GLOBAL_SETTINGS_FILE" &>/dev/null
             return $?
         else
-            # Fallback: check if hooks exist in the file using grep
-            grep -q '"hooks"' "$GLOBAL_SETTINGS_FILE" 2>/dev/null
+            # Fallback: check for claude-notify hook types using grep
+            grep -qE '"(Notification|Stop)"' "$GLOBAL_SETTINGS_FILE" 2>/dev/null
             return $?
         fi
     fi
@@ -335,18 +337,20 @@ enable_project_hooks_in_settings() {
 EOF
 }
 
-# Check if project has settings.json with hooks
+# Check if project has settings.json with claude-notify hooks
 is_enabled_project_settings() {
     local project_root=$(get_project_root 2>/dev/null || echo "$PWD")
     local project_settings="$project_root/$PROJECT_SETTINGS_FILE"
-    
+
     if [[ -f "$project_settings" ]]; then
         if command -v jq &> /dev/null; then
-            jq -e '.hooks != null and .hooks != {}' "$project_settings" &>/dev/null
+            # Check for claude-notify specific hooks (Notification or Stop events)
+            # Not just any hooks - other tools may add their own hooks
+            jq -e '(.hooks.Notification != null) or (.hooks.Stop != null)' "$project_settings" &>/dev/null
             return $?
         else
-            # Fallback: check if hooks exist in the file using grep
-            grep -q '"hooks"' "$project_settings" 2>/dev/null
+            # Fallback: check for claude-notify hook types using grep
+            grep -qE '"(Notification|Stop)"' "$project_settings" 2>/dev/null
             return $?
         fi
     fi
