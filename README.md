@@ -121,6 +121,14 @@ irm https://raw.githubusercontent.com/mylee04/claude-notify/main/install-windows
 
 > **Note**: Windows support is experimental and hasn't been fully tested yet. If you're a Windows user, please [report any issues](https://github.com/mylee04/claude-notify/issues) or let me know if it works! Your feedback will help improve Windows support. 🙏
 
+#### WSL (Windows Subsystem for Linux)
+```bash
+# Clone and install
+git clone https://github.com/mylee04/claude-notify.git
+cd claude-notify
+./install.sh
+```
+
 #### Linux (Bash)
 ```bash
 # Download and run the installer

@@ -209,26 +209,61 @@ run_setup_wizard() {
         info "Claude-Notify will create configuration at: $CLAUDE_HOME"
     fi
     
-    # Check terminal-notifier
+    # Check notification system
     echo ""
     info "Checking notification system..."
-    if detect_terminal_notifier &> /dev/null; then
-        success "terminal-notifier is installed"
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        # Check wsl-notify-send (WSL)
+        if detect_wsl_notify_send &> /dev/null; then
+            success "wsl-notify-send.exe is installed"
+        else
+            # Prompt to install wsl-notify-send
+            warning "wsl-notify-send.exe not found"
+            echo ""
+            echo "WSL requires wsl-notify-send for Windows Toast notifications."
+            echo "Install it with:"
+            echo "  ${CYAN}curl -L -o wsl-notify-send.zip https://github.com/stuartleeks/wsl-notify-send/releases/download/v0.1.871612270/wsl-notify-send_windows_amd64.zip${RESET}"
+            echo "  ${CYAN}unzip wsl-notify-send.zip -d ~/.local/bin/${RESET}"
+            echo "  ${CYAN}chmod +x ~/.local/bin/wsl-notify-send.exe${RESET}"
+            echo ""
+            read -p "Would you like to install it now? (y/n) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                info "Installing wsl-notify-send.exe..."
+                mkdir -p ~/.local/bin
+                if curl -sL -o wsl-notify-send.zip https://github.com/stuartleeks/wsl-notify-send/releases/download/v0.1.871612270/wsl-notify-send_windows_amd64.zip && \
+                   unzip -o wsl-notify-send.zip -d ~/.local/bin/ && \
+                   chmod +x ~/.local/bin/wsl-notify-send.exe; then
+                    success "wsl-notify-send.exe installed successfully"
+                    info "Make sure ~/.local/bin is in your PATH"
+                else
+                    error "Failed to install wsl-notify-send.exe"
+                    info "You can install it manually later"
+                fi
+                rm -f wsl-notify-send.zip
+            fi
+        fi
     else
-        warning "terminal-notifier not found"
-        echo ""
-        echo "For the best experience, install terminal-notifier:"
-        echo "  ${CYAN}brew install terminal-notifier${RESET}"
-        echo ""
-        read -p "Would you like to install it now? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            info "Installing terminal-notifier..."
-            if brew install terminal-notifier; then
-                success "terminal-notifier installed successfully"
-            else
-                error "Failed to install terminal-notifier"
-                info "You can install it manually later"
+        # Check terminal-notifier (macOS)
+        if detect_terminal_notifier &> /dev/null; then
+            success "terminal-notifier is installed"
+        else
+            # Prompt to install terminal-notifier
+            warning "terminal-notifier not found"
+            echo ""
+            echo "For the best experience, install terminal-notifier:"
+            echo "  ${CYAN}brew install terminal-notifier${RESET}"
+            echo ""
+            read -p "Would you like to install it now? (y/n) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                info "Installing terminal-notifier..."
+                if brew install terminal-notifier; then
+                    success "terminal-notifier installed successfully"
+                else
+                    error "Failed to install terminal-notifier"
+                    info "You can install it manually later"
+                fi
             fi
         fi
     fi
