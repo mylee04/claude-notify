@@ -5,23 +5,23 @@
 # Check if terminal supports colors
 if [[ -t 1 ]] && [[ "$(tput colors)" -ge 8 ]]; then
     # Regular Colors
-    BLACK='\033[0;30m'
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[0;33m'
-    BLUE='\033[0;34m'
-    PURPLE='\033[0;35m'
-    CYAN='\033[0;36m'
-    WHITE='\033[0;37m'
+    BLACK=$'\033[0;30m'
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    BLUE=$'\033[0;34m'
+    PURPLE=$'\033[0;35m'
+    CYAN=$'\033[0;36m'
+    WHITE=$'\033[0;37m'
     
     # Bold
-    BOLD='\033[1m'
+    BOLD=$'\033[1m'
     
     # Dim
-    DIM='\033[2m'
+    DIM=$'\033[2m'
     
     # Reset
-    RESET='\033[0m'
+    RESET=$'\033[0m'
     
     # Emojis for status
     CHECK_MARK="✅"
