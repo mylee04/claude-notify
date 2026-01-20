@@ -670,9 +670,13 @@ if (-not $ProjectName) {
         # Check if git is available and we're in a git repo
         $gitCmd = Get-Command git -ErrorAction SilentlyContinue
         if ($gitCmd) {
-            $gitRoot = & git rev-parse --show-toplevel 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                $gitRoot = $null
+            # Use cmd to avoid PowerShell surfacing git stderr as an error record
+            $insideRepo = cmd /c "git rev-parse --is-inside-work-tree 2>nul"
+            if ($LASTEXITCODE -eq 0 -and $insideRepo.Trim() -eq "true") {
+                $gitRoot = cmd /c "git rev-parse --show-toplevel 2>nul"
+                if ($LASTEXITCODE -ne 0) {
+                    $gitRoot = $null
+                }
             }
         }
     } catch {
