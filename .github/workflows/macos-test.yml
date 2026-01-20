@@ -4,14 +4,14 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'install.sh'
+      - 'scripts/install.sh'
       - 'bin/**'
       - 'lib/**'
       - '.github/workflows/macos-test.yml'
   pull_request:
     branches: [ main ]
     paths:
-      - 'install.sh'
+      - 'scripts/install.sh'
       - 'bin/**'
       - 'lib/**'
       - '.github/workflows/macos-test.yml'
@@ -38,7 +38,7 @@ jobs:
 
     - name: Test install.sh syntax
       run: |
-        bash -n install.sh
+        bash -n scripts/install.sh
         echo "Syntax check passed!"
 
     - name: Test main script syntax
@@ -56,8 +56,8 @@ jobs:
 
     - name: Run installation
       run: |
-        chmod +x install.sh
-        ./install.sh
+        chmod +x scripts/install.sh
+        ./scripts/install.sh
 
     - name: Verify installation directories
       run: |
