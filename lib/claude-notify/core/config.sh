@@ -20,6 +20,55 @@ ensure_config_dir() {
     mkdir -p "$CONFIG_DIR" "$BACKUP_DIR"
 }
 
+# --- JSON Helper Functions ---
+
+# Check if jq is available
+has_jq() {
+    command -v jq &> /dev/null
+}
+
+# Validate JSON file format
+validate_json() {
+    local file="$1"
+    if [[ ! -f "$file" ]]; then
+        return 1
+    fi
+    if has_jq; then
+        jq empty "$file" 2>/dev/null
+    else
+        # Basic validation: check for balanced braces
+        grep -q '{' "$file" && grep -q '}' "$file"
+    fi
+}
+
+# Check if JSON path exists (returns 0 if exists)
+json_has() {
+    local file="$1"
+    local jq_path="$2"
+    local grep_pattern="$3"
+
+    if [[ ! -f "$file" ]]; then
+        return 1
+    fi
+    if has_jq; then
+        jq -e "$jq_path" "$file" &>/dev/null
+    else
+        grep -qE "$grep_pattern" "$file" 2>/dev/null
+    fi
+}
+
+# Check if file has claude-notify specific hooks (Notification or Stop)
+has_claude_notify_hooks() {
+    local file="$1"
+    json_has "$file" '(.hooks.Notification != null) or (.hooks.Stop != null)' '"(Notification|Stop)"'
+}
+
+# Check if file has any hooks
+has_any_hooks() {
+    local file="$1"
+    json_has "$file" '.hooks != null' '"hooks"'
+}
+
 # Get hooks file path (project or global)
 get_hooks_file() {
     local project_root=$(get_project_root 2>/dev/null || echo "$PWD")
@@ -44,17 +93,8 @@ is_enabled() {
 # Check if notifications are enabled globally
 is_enabled_globally() {
     # Check new settings.json format first
-    if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
-        if command -v jq &> /dev/null; then
-            # Check for claude-notify specific hooks (Notification or Stop events)
-            # Not just any hooks - other tools may add their own hooks
-            jq -e '(.hooks.Notification != null) or (.hooks.Stop != null)' "$GLOBAL_SETTINGS_FILE" &>/dev/null
-            return $?
-        else
-            # Fallback: check for claude-notify hook types using grep
-            grep -qE '"(Notification|Stop)"' "$GLOBAL_SETTINGS_FILE" 2>/dev/null
-            return $?
-        fi
+    if has_claude_notify_hooks "$GLOBAL_SETTINGS_FILE"; then
+        return 0
     fi
     # Fall back to legacy hooks.json
     [[ -f "$GLOBAL_HOOKS_FILE" ]]
@@ -123,19 +163,7 @@ get_notify_script() {
 # Validate hooks file format
 validate_hooks_file() {
     local file="$1"
-    if [[ ! -f "$file" ]]; then
-        return 1
-    fi
-    
-    # Basic JSON validation
-    if command -v jq &> /dev/null; then
-        jq empty "$file" 2>/dev/null
-        return $?
-    else
-        # Fallback: just check if file contains "hooks"
-        grep -q '"hooks"' "$file"
-        return $?
-    fi
+    validate_json "$file" && has_any_hooks "$file"
 }
 
 # Get current configuration status
@@ -146,7 +174,7 @@ get_status_info() {
     if is_enabled_globally; then
         status_info="${status_info}${BELL} Global notifications: ${GREEN}ENABLED${RESET}\n"
         # Check which config file is being used
-        if [[ -f "$GLOBAL_SETTINGS_FILE" ]] && command -v jq &> /dev/null && jq -e '.hooks != null' "$GLOBAL_SETTINGS_FILE" &>/dev/null; then
+        if has_any_hooks "$GLOBAL_SETTINGS_FILE"; then
             status_info="${status_info}   Config: $GLOBAL_SETTINGS_FILE (new format)\n"
         else
             status_info="${status_info}   Config: $GLOBAL_HOOKS_FILE (legacy)\n"
@@ -195,7 +223,7 @@ enable_hooks_in_settings() {
     fi
     
     # Add hooks using jq if available
-    if command -v jq &> /dev/null; then
+    if has_jq; then
         settings=$(echo "$settings" | jq --arg script "$notify_script" '.hooks = {
             "Notification": [{
                 "matcher": "",
@@ -272,7 +300,7 @@ disable_hooks_in_settings() {
     fi
     
     # Remove hooks using jq if available
-    if command -v jq &> /dev/null; then
+    if has_jq; then
         local settings=$(cat "$GLOBAL_SETTINGS_FILE")
         echo "$settings" | jq 'del(.hooks)' > "$GLOBAL_SETTINGS_FILE"
     else
@@ -341,18 +369,5 @@ EOF
 is_enabled_project_settings() {
     local project_root=$(get_project_root 2>/dev/null || echo "$PWD")
     local project_settings="$project_root/$PROJECT_SETTINGS_FILE"
-
-    if [[ -f "$project_settings" ]]; then
-        if command -v jq &> /dev/null; then
-            # Check for claude-notify specific hooks (Notification or Stop events)
-            # Not just any hooks - other tools may add their own hooks
-            jq -e '(.hooks.Notification != null) or (.hooks.Stop != null)' "$project_settings" &>/dev/null
-            return $?
-        else
-            # Fallback: check for claude-notify hook types using grep
-            grep -qE '"(Notification|Stop)"' "$project_settings" 2>/dev/null
-            return $?
-        fi
-    fi
-    return 1
+    has_claude_notify_hooks "$project_settings"
 }

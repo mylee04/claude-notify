@@ -14,6 +14,11 @@ if [[ ! -t 0 ]]; then
     HOOK_DATA=$(cat 2>/dev/null || true)
 fi
 
+# Source shared utilities
+NOTIFIER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$NOTIFIER_DIR/../utils/detect.sh"
+source "$NOTIFIER_DIR/../utils/voice.sh"
+
 # Function to check if notification should be suppressed
 should_suppress_notification() {
     # Skip suppression checks for test notifications
@@ -87,16 +92,6 @@ case "$HOOK_TYPE" in
         ;;
 esac
 
-# Detect operating system
-detect_os() {
-    case "$(uname -s)" in
-        Darwin*)    echo "macos" ;;
-        Linux*)     echo "linux" ;;
-        CYGWIN*|MINGW*|MSYS*) echo "windows" ;;
-        *)          echo "unknown" ;;
-    esac
-}
-
 # Function to send notification on macOS
 send_macos_notification() {
     if command -v terminal-notifier &> /dev/null; then
@@ -162,11 +157,9 @@ case "$OS" in
     macos)
         send_macos_notification
         # Add voice notification if enabled
-        if [[ -f "$HOME/.claude-notify/config/voice.conf" ]]; then
-            VOICE=$(cat "$HOME/.claude-notify/config/voice.conf" 2>/dev/null || echo "")
-            if [[ -n "$VOICE" ]]; then
-                say -v "$VOICE" "$MESSAGE" &
-            fi
+        VOICE=$(get_voice "global" 2>/dev/null || echo "")
+        if [[ -n "$VOICE" ]]; then
+            say -v "$VOICE" "$MESSAGE" &
         fi
         ;;
     linux)

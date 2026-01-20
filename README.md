@@ -191,6 +191,9 @@ That's it! You'll now receive notifications when Claude Code completes tasks.
 
 Claude-notify provides **two ways** to run every command - use whichever you prefer!
 
+### Help Command
+![cn help output](assets/cn-help.png)
+
 ### 🎯 Understanding Global vs Project Settings
 
 Claude-notify uses a **layered configuration system** (like CSS inheritance):
@@ -550,6 +553,33 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📝 Development
 
+### Project Structure
+
+```
+claude-notify/
+├── bin/
+│   └── claude-notify         # Main executable (cn, cnp aliases)
+├── lib/claude-notify/
+│   ├── commands/
+│   │   ├── global.sh         # Global command handlers (on/off/status/test/voice)
+│   │   └── project.sh        # Project command handlers (cnp commands)
+│   ├── core/
+│   │   ├── config.sh         # Configuration management & JSON helpers
+│   │   └── notifier.sh       # Notification delivery (macOS/Linux/Windows)
+│   └── utils/
+│       ├── colors.sh         # Terminal colors and output helpers
+│       ├── detect.sh         # OS and environment detection
+│       ├── help.sh           # Shared help text
+│       └── voice.sh          # Voice notification utilities
+├── test/
+│   └── run_tests.sh          # Test suite
+├── examples/
+│   └── HOOKS_GUIDE.md        # Hook configuration examples
+├── install.sh                # Universal installer script
+├── Makefile                  # Build and test automation
+└── README.md
+```
+
 ### Local Installation
 
 ```bash
@@ -573,6 +603,9 @@ cn status
 ```bash
 # Run test suite
 make test
+
+# Run linter (requires shellcheck)
+make lint
 
 # Test Homebrew formula locally
 brew install --build-from-source Formula/claude-notify.rb

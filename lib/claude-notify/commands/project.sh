@@ -2,6 +2,10 @@
 
 # Project-specific command handlers for Claude-Notify
 
+# Source voice utilities
+PROJECT_CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PROJECT_CMD_DIR/../utils/voice.sh"
+
 # Handle project commands
 handle_project_command() {
     local command="${1:-status}"
@@ -221,15 +225,16 @@ init_project_interactive() {
 # Handle project voice commands
 handle_project_voice_command() {
     local subcommand="${1:-status}"
-    local project_root=$(get_project_root)
-    local project_name=$(get_project_name)
-    local project_voice_file="$project_root/.claude/voice"
-    
+    local project_root
+    local project_name
+    project_root=$(get_project_root)
+    project_name=$(get_project_name)
+
     case "$subcommand" in
         "on")
             header "${SPEAKER} Setting Voice for Project: $project_name"
             echo ""
-            
+
             # Show available voices
             info "Available voices for this project:"
             echo "  Popular choices:"
@@ -240,42 +245,41 @@ handle_project_voice_command() {
             echo "    - Whisper (Whispering)"
             echo "    - Good News, Bad News (Novelty)"
             echo ""
-            
+
             # Ask for voice preference
             read -p "Which voice for $project_name? (default: Samantha) " voice
             voice=${voice:-Samantha}
-            
-            # Create .claude directory if needed
-            mkdir -p "$project_root/.claude"
-            
-            # Save project voice
-            echo "$voice" > "$project_voice_file"
+
+            # Enable project voice
+            enable_voice "$voice" "project" "$project_root"
             success "Project voice set to: $voice"
-            
+
             # Test it
-            say -v "$voice" "Voice notifications for $project_name will use $voice" &
+            test_voice "$voice" "Voice notifications for $project_name will use $voice"
             ;;
-            
+
         "off")
             header "${MUTE} Removing Project Voice Setting"
             echo ""
-            if [[ -f "$project_voice_file" ]]; then
-                rm "$project_voice_file"
+            if is_voice_enabled "project" "$project_root"; then
+                disable_voice "project" "$project_root"
                 success "Project voice setting removed"
                 info "Will use global voice setting or default"
             else
                 warning "No project voice setting to remove"
             fi
             ;;
-            
+
         "status"|*)
-            if [[ -f "$project_voice_file" ]]; then
-                local current_voice=$(cat "$project_voice_file")
+            if is_voice_enabled "project" "$project_root"; then
+                local current_voice
+                current_voice=$(get_voice "project" "$project_root")
                 status_enabled "Project voice: $current_voice"
             else
                 status_disabled "Project voice: Not set (using global)"
-                if [[ -f ~/.claude/notifications/voice-enabled ]]; then
-                    local global_voice=$(cat ~/.claude/notifications/voice-enabled)
+                if is_voice_enabled "global"; then
+                    local global_voice
+                    global_voice=$(get_voice "global")
                     info "Global voice: $global_voice"
                 fi
             fi
