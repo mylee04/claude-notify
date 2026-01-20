@@ -1,5 +1,8 @@
 # Claude-Notify
 
+> **Official Repository**: https://github.com/mylee04/claude-notify
+> **Homebrew**: `brew install mylee04/tools/claude-notify`
+
 Desktop notifications for Claude Code - get alerts when tasks complete or input is needed.
 
 ![Claude-Notify Banner](assets/banner.png)
