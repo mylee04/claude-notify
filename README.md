@@ -17,58 +17,52 @@ Desktop notifications for Claude Code - get alerts when tasks complete or input 
 - **Project-specific settings** - Different configs per project
 - **Quick aliases** - `cn` and `cnp` for fast access
 
-## Quick Start
+## Installation
 
-### Install (macOS)
+### For Humans
 
+**macOS (Homebrew)**
 ```bash
 brew tap mylee04/tools
 brew install claude-notify
+cn on
 ```
 
-### Install (Linux/WSL)
-
+**Linux / WSL**
 ```bash
 curl -sSL https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/install.sh | bash
 ```
 
-### Enable Notifications
+### For LLM Agents
 
-```bash
-cn on          # Enable globally
-cn test        # Send test notification
+Paste this to your AI agent (Claude Code, Cursor, etc.):
+
+```
+Install claude-notify by following:
+https://raw.githubusercontent.com/mylee04/claude-notify/main/docs/installation.md
 ```
 
-That's it! You'll now receive notifications when Claude Code completes tasks.
+Or fetch directly:
+```bash
+curl -s https://raw.githubusercontent.com/mylee04/claude-notify/main/docs/installation.md
+```
 
 ## Usage
 
 ![cn help output](assets/cn-help.png)
 
-### Commands
-
 | Command | Description |
 |---------|-------------|
 | `cn on` | Enable notifications globally |
-| `cn off` | Disable notifications globally |
-| `cn status` | Show current status |
+| `cn off` | Disable notifications |
 | `cn test` | Send test notification |
-| `cn voice on` | Enable voice announcements |
+| `cn status` | Show current status |
+| `cn voice on` | Enable voice (macOS) |
+| `cnp on` | Enable for current project only |
 
-### Project Commands
+## How It Works
 
-Use `cnp` for project-specific settings that override global config:
-
-```bash
-cnp on         # Enable for current project only
-cnp off        # Disable for current project
-cnp status     # Show project status
-cnp voice on   # Set project-specific voice
-```
-
-## Configuration
-
-Claude-Notify uses Claude Code's hook system via `~/.claude/settings.json`:
+Claude-Notify uses Claude Code's hook system. When enabled, it adds hooks to `~/.claude/settings.json`:
 
 ```json
 {
@@ -79,55 +73,38 @@ Claude-Notify uses Claude Code's hook system via `~/.claude/settings.json`:
 }
 ```
 
-Project settings are stored in `.claude/settings.json` within your project.
+## Troubleshooting
 
-## Voice Notifications (macOS)
-
+**Command not found?**
 ```bash
-cn voice on    # Enable with voice selection
-cn voice off   # Disable
-cn voice status
+exec $SHELL   # Reload shell
 ```
 
-Available voices: Samantha, Alex, Daniel (British), Fiona (Scottish), Whisper, and more.
+**No notifications?**
+```bash
+cn status     # Check if enabled
+cn test       # Test notification
+brew install terminal-notifier  # Better notifications (macOS)
+```
 
 ## Project Structure
 
 ```
 claude-notify/
-├── bin/                  # Main executable
-├── lib/claude-notify/    # Library code
-│   ├── commands/         # Command handlers
-│   ├── core/             # Config & notifier
-│   └── utils/            # Helpers
-├── scripts/              # Install scripts & tests
-├── docs/                 # Documentation
-└── assets/               # Images
+├── bin/           # Main executable
+├── lib/           # Library code
+├── scripts/       # Install scripts
+├── docs/          # Documentation
+└── assets/        # Images
 ```
-
-## Troubleshooting
-
-**Notifications not appearing?**
-```bash
-cn status              # Check if enabled
-cn test                # Test notification
-brew install terminal-notifier  # Better notifications (macOS)
-```
-
-**Command not found?**
-```bash
-exec $SHELL            # Reload shell
-```
-
-## Contributing
-
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
 
 ## Links
 
+- [Installation Guide](docs/installation.md)
+- [Hook Configuration](docs/HOOKS_GUIDE.md)
+- [Contributing](docs/CONTRIBUTING.md)
 - [GitHub Issues](https://github.com/mylee04/claude-notify/issues)
-- [Hook Configuration Guide](docs/HOOKS_GUIDE.md)
+
+## License
+
+MIT License - see [LICENSE](LICENSE)

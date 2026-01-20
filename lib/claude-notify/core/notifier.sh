@@ -159,7 +159,7 @@ case "$OS" in
         # Add voice notification if enabled
         VOICE=$(get_voice "global" 2>/dev/null || echo "")
         if [[ -n "$VOICE" ]]; then
-            say -v "$VOICE" "$MESSAGE" &
+            say -v "$VOICE" "$MESSAGE"
         fi
         ;;
     linux)
