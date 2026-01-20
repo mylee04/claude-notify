@@ -15,6 +15,7 @@ Desktop notifications for Claude Code - get alerts when tasks complete or input 
 
 ## Features
 
+- **Works everywhere** - Terminal, VSCode, Cursor, or any editor with Claude Code
 - **Cross-platform** - macOS, Linux, Windows (experimental)
 - **Native notifications** - Uses system notification APIs
 - **Voice announcements** - Hear when tasks complete (macOS)
