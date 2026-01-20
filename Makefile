@@ -1,4 +1,4 @@
-# Makefile for Claude-Notify
+# Makefile for Code-Notify
 
 .PHONY: test install clean lint help
 
@@ -9,18 +9,18 @@ test:
 
 # Install locally for development
 install:
-	@echo "Installing claude-notify locally..."
-	@chmod +x bin/claude-notify
+	@echo "Installing code-notify locally..."
+	@chmod +x bin/code-notify
 	@mkdir -p $(HOME)/.local/bin
-	@ln -sf $(PWD)/bin/claude-notify $(HOME)/.local/bin/claude-notify
-	@ln -sf $(PWD)/bin/claude-notify $(HOME)/.local/bin/cn
-	@ln -sf $(PWD)/bin/claude-notify $(HOME)/.local/bin/cnp
+	@ln -sf $(PWD)/bin/code-notify $(HOME)/.local/bin/code-notify
+	@ln -sf $(PWD)/bin/code-notify $(HOME)/.local/bin/cn
+	@ln -sf $(PWD)/bin/code-notify $(HOME)/.local/bin/cnp
 	@echo "Installed. Make sure $(HOME)/.local/bin is in your PATH"
 
 # Uninstall local installation
 uninstall:
 	@echo "Removing local installation..."
-	@rm -f $(HOME)/.local/bin/claude-notify
+	@rm -f $(HOME)/.local/bin/code-notify
 	@rm -f $(HOME)/.local/bin/cn
 	@rm -f $(HOME)/.local/bin/cnp
 	@echo "Uninstalled."
@@ -28,14 +28,14 @@ uninstall:
 # Clean up backup files and caches
 clean:
 	@echo "Cleaning up..."
-	@rm -rf $(HOME)/.config/claude-notify/backups/*
+	@rm -rf $(HOME)/.config/code-notify/backups/*
 	@echo "Cleaned."
 
 # Basic shell script linting (requires shellcheck)
 lint:
 	@echo "Linting shell scripts..."
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck bin/claude-notify lib/claude-notify/**/*.sh; \
+		shellcheck bin/code-notify lib/code-notify/**/*.sh; \
 	else \
 		echo "shellcheck not installed. Install with: brew install shellcheck"; \
 		exit 1; \
@@ -43,7 +43,7 @@ lint:
 
 # Show help
 help:
-	@echo "Claude-Notify Makefile"
+	@echo "Code-Notify Makefile"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""

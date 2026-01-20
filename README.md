@@ -1,24 +1,27 @@
-# Claude-Notify
+# Code-Notify
 
-> ✅ **Official downloads**: https://github.com/mylee04/claude-notify/releases
+> **Official downloads**: https://github.com/mylee04/code-notify/releases
 >
-> **Homebrew**: `brew install mylee04/tools/claude-notify`
+> **Homebrew**: `brew install mylee04/tools/code-notify`
 
-Desktop notifications for Claude Code - get alerts when tasks complete or input is needed.
+Desktop notifications for AI coding tools - get alerts when tasks complete or input is needed.
 
-![Claude-Notify Banner](assets/banner.png)
+![Code-Notify Banner](assets/banner.png)
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/mylee04/claude-notify/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-supported-green.svg)](https://www.apple.com/macos)
 [![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
+[![Windows](https://img.shields.io/badge/Windows-supported-green.svg)](https://www.microsoft.com/windows)
 
 ## Features
 
-- **Works everywhere** - Terminal, VSCode, Cursor, or any editor with Claude Code
+- **Multi-tool support** - Claude Code, OpenAI Codex, Google Gemini CLI
+- **Works everywhere** - Terminal, VSCode, Cursor, or any editor
 - **Cross-platform** - macOS, Linux, Windows
 - **Native notifications** - Uses system notification APIs
 - **Voice announcements** - Hear when tasks complete (macOS, Windows)
+- **Tool-specific messages** - "Claude completed the task", "Codex completed the task"
 - **Project-specific settings** - Different configs per project
 - **Quick aliases** - `cn` and `cnp` for fast access
 
@@ -29,13 +32,18 @@ Desktop notifications for Claude Code - get alerts when tasks complete or input 
 **macOS (Homebrew)**
 ```bash
 brew tap mylee04/tools
-brew install claude-notify
+brew install code-notify
 cn on
 ```
 
 **Linux / WSL**
 ```bash
-curl -sSL https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/mylee04/code-notify/main/scripts/install.sh | bash
+```
+
+**Windows**
+```powershell
+irm https://raw.githubusercontent.com/mylee04/code-notify/main/scripts/install-windows.ps1 | iex
 ```
 
 ### For LLM Agents
@@ -43,13 +51,13 @@ curl -sSL https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/i
 Paste this to your AI agent (Claude Code, Cursor, etc.):
 
 ```
-Install claude-notify by following:
-https://raw.githubusercontent.com/mylee04/claude-notify/main/docs/installation.md
+Install code-notify by following:
+https://raw.githubusercontent.com/mylee04/code-notify/main/docs/installation.md
 ```
 
 Or fetch directly:
 ```bash
-curl -s https://raw.githubusercontent.com/mylee04/claude-notify/main/docs/installation.md
+curl -s https://raw.githubusercontent.com/mylee04/code-notify/main/docs/installation.md
 ```
 
 ## Usage
@@ -58,22 +66,32 @@ curl -s https://raw.githubusercontent.com/mylee04/claude-notify/main/docs/instal
 
 | Command | Description |
 |---------|-------------|
-| `cn on` | Enable notifications globally |
+| `cn on` | Enable notifications for all detected tools |
+| `cn on claude` | Enable for Claude Code only |
+| `cn on codex` | Enable for Codex only |
+| `cn on gemini` | Enable for Gemini CLI only |
 | `cn off` | Disable notifications |
 | `cn test` | Send test notification |
 | `cn status` | Show current status |
-| `cn voice on` | Enable voice (macOS) |
+| `cn voice on` | Enable voice (macOS, Windows) |
+| `cn voice on claude` | Enable voice for Claude only |
 | `cnp on` | Enable for current project only |
 
 ## How It Works
 
-Claude-Notify uses Claude Code's hook system. When enabled, it adds hooks to `~/.claude/settings.json`:
+Code-Notify uses the hook systems built into AI coding tools:
+
+- **Claude Code**: `~/.claude/settings.json`
+- **Codex**: `~/.codex/config.toml`
+- **Gemini CLI**: `~/.gemini/settings.json`
+
+When enabled, it adds hooks that call the notification script when tasks complete:
 
 ```json
 {
   "hooks": {
-    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "notify.sh stop" }] }],
-    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "notify.sh notification" }] }]
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "notify.sh stop claude" }] }],
+    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "notify.sh notification claude" }] }]
   }
 }
 ```
@@ -95,7 +113,7 @@ brew install terminal-notifier  # Better notifications (macOS)
 ## Project Structure
 
 ```
-claude-notify/
+code-notify/
 ├── bin/           # Main executable
 ├── lib/           # Library code
 ├── scripts/       # Install scripts
@@ -108,7 +126,7 @@ claude-notify/
 - [Installation Guide](docs/installation.md)
 - [Hook Configuration](docs/HOOKS_GUIDE.md)
 - [Contributing](docs/CONTRIBUTING.md)
-- [GitHub Issues](https://github.com/mylee04/claude-notify/issues)
+- [GitHub Issues](https://github.com/mylee04/code-notify/issues)
 
 ## License
 

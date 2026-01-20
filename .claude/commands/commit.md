@@ -22,7 +22,7 @@ description: Create a well-formatted commit
 make test
 
 # Check for lint issues
-shellcheck bin/claude-notify lib/claude-notify/**/*.sh
+shellcheck bin/code-notify lib/code-notify/**/*.sh
 ```
 
 ### 2. Review Changes

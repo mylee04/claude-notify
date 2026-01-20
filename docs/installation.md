@@ -1,25 +1,25 @@
-# Claude-Notify Installation Guide
+# Code-Notify Installation Guide
 
 > This guide is designed for both humans and LLM agents. If you're an AI agent, follow the automated steps below.
 
 ## Quick Overview
 
-Claude-Notify adds desktop notifications to Claude Code. You'll get alerts when:
+Code-Notify adds desktop notifications to Claude Code. You'll get alerts when:
 - Tasks complete
 - Claude needs your input
 - Voice announcements (macOS)
 
 ## For LLM Agents
 
-Execute these commands to install claude-notify:
+Execute these commands to install code-notify:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/mylee04/claude-notify.git /tmp/claude-notify
+git clone https://github.com/mylee04/code-notify.git /tmp/code-notify
 
 # 2. Run the installer
-chmod +x /tmp/claude-notify/scripts/install.sh
-/tmp/claude-notify/scripts/install.sh
+chmod +x /tmp/code-notify/scripts/install.sh
+/tmp/code-notify/scripts/install.sh
 
 # 3. Reload shell
 exec $SHELL
@@ -31,14 +31,14 @@ cn on
 cn test
 
 # 6. Clean up
-rm -rf /tmp/claude-notify
+rm -rf /tmp/code-notify
 ```
 
 ### Verify Installation
 
 After installation, confirm these work:
 ```bash
-cn version    # Should show: claude-notify version X.X.X
+cn version    # Should show: code-notify version X.X.X
 cn status     # Should show: Global notifications: ENABLED
 cn test       # Should trigger a desktop notification
 ```
@@ -81,7 +81,7 @@ cn status
 ### Configuration Files
 
 After installation, these files are created:
-- `~/.claude-notify/` - Main installation directory
+- `~/.code-notify/` - Main installation directory
 - `~/.claude/settings.json` - Hook configuration (when enabled)
 - `~/.claude/notifications/voice-enabled` - Voice setting (if enabled)
 
@@ -92,8 +92,8 @@ After installation, these files are created:
 cn off
 
 # Remove installation
-rm -rf ~/.claude-notify
-rm -f ~/.local/bin/cn ~/.local/bin/cnp ~/.local/bin/claude-notify
+rm -rf ~/.code-notify
+rm -f ~/.local/bin/cn ~/.local/bin/cnp ~/.local/bin/code-notify
 rm -rf ~/.claude/notifications
 ```
 
@@ -105,14 +105,14 @@ rm -rf ~/.claude/notifications
 
 ```bash
 brew tap mylee04/tools
-brew install claude-notify
+brew install code-notify
 cn on
 ```
 
 ### Linux / WSL
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/mylee04/code-notify/main/scripts/install.sh | bash
 exec $SHELL
 cn on
 ```
@@ -120,8 +120,8 @@ cn on
 ### Manual Installation
 
 ```bash
-git clone https://github.com/mylee04/claude-notify.git
-cd claude-notify
+git clone https://github.com/mylee04/code-notify.git
+cd code-notify
 ./scripts/install.sh
 ```
 

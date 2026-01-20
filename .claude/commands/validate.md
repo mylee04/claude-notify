@@ -19,7 +19,7 @@ description: Validate shell script syntax and best practices
 
 ### 1. Run Shellcheck
 ```bash
-shellcheck bin/claude-notify lib/claude-notify/**/*.sh
+shellcheck bin/code-notify lib/code-notify/**/*.sh
 ```
 
 ### 2. Check PowerShell Syntax

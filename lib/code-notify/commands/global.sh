@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Global command handlers for Claude-Notify
+# Global command handlers for Code-Notify
 
 # Source utilities
 GLOBAL_CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,7 +46,7 @@ handle_global_command() {
 
 # Show version (can be called from handle_global_command)
 show_version() {
-    echo "claude-notify version $VERSION"
+    echo "code-notify version $VERSION"
 }
 
 # Enable notifications globally
@@ -281,11 +281,11 @@ test_notification() {
         # Fallback to basic notification
         if command -v terminal-notifier &> /dev/null; then
             terminal-notifier \
-                -title "Claude-Notify Test ${CHECK_MARK}" \
+                -title "Code-Notify Test ${CHECK_MARK}" \
                 -message "Notifications are working!" \
                 -sound "Glass"
         else
-            osascript -e 'display notification "Notifications are working!" with title "Claude-Notify Test"'
+            osascript -e 'display notification "Notifications are working!" with title "Code-Notify Test"'
         fi
     else
         # Use the actual notification script
@@ -300,7 +300,7 @@ test_notification() {
 
 # Run setup wizard
 run_setup_wizard() {
-    header "${ROCKET} Claude-Notify Setup Wizard"
+    header "${ROCKET} Code-Notify Setup Wizard"
     echo ""
     
     # Check Claude Code
@@ -309,7 +309,7 @@ run_setup_wizard() {
         success "Claude Code found at: $(detect_claude_code)"
     else
         warning "Claude Code installation not detected"
-        info "Claude-Notify will create configuration at: $CLAUDE_HOME"
+        info "Code-Notify will create configuration at: $CLAUDE_HOME"
     fi
     
     # Check notification system
@@ -398,8 +398,8 @@ check_for_updates() {
     info "Checking for updates..."
     # This would normally check GitHub releases API
     # For now, just show how to update
-    echo "To update claude-notify, run:"
-    echo "  ${CYAN}brew upgrade claude-notify${RESET}"
+    echo "To update code-notify, run:"
+    echo "  ${CYAN}brew upgrade code-notify${RESET}"
 }
 
 # Handle voice commands

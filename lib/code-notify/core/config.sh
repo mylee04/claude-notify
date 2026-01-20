@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Configuration management for Claude-Notify
+# Configuration management for Code-Notify
 
 # Default paths - Claude Code
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 GLOBAL_SETTINGS_FILE="$CLAUDE_HOME/settings.json"
 GLOBAL_HOOKS_FILE="$CLAUDE_HOME/hooks.json"  # Legacy support
 GLOBAL_HOOKS_DISABLED="$CLAUDE_HOME/hooks.json.disabled"
-CONFIG_DIR="$HOME/.config/claude-notify"
+CONFIG_DIR="$HOME/.config/code-notify"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 BACKUP_DIR="$CONFIG_DIR/backups"
 
@@ -65,7 +65,7 @@ json_has() {
     fi
 }
 
-# Check if file has claude-notify specific hooks (Notification or Stop)
+# Check if file has code-notify specific hooks (Notification or Stop)
 has_claude_notify_hooks() {
     local file="$1"
     json_has "$file" '(.hooks.Notification != null) or (.hooks.Stop != null)' '"(Notification|Stop)"'
@@ -157,8 +157,8 @@ backup_config() {
 # Get notification script path
 get_notify_script() {
     # First check if installed via Homebrew
-    if [[ -f "/usr/local/opt/claude-notify/lib/claude-notify/core/notifier.sh" ]]; then
-        echo "/usr/local/opt/claude-notify/lib/claude-notify/core/notifier.sh"
+    if [[ -f "/usr/local/opt/code-notify/lib/code-notify/core/notifier.sh" ]]; then
+        echo "/usr/local/opt/code-notify/lib/code-notify/core/notifier.sh"
     # Then check home directory
     elif [[ -f "$HOME/.claude/notifications/notify.sh" ]]; then
         echo "$HOME/.claude/notifications/notify.sh"
@@ -373,7 +373,7 @@ enable_project_hooks_in_settings() {
 EOF
 }
 
-# Check if project has settings.json with claude-notify hooks
+# Check if project has settings.json with code-notify hooks
 is_enabled_project_settings() {
     local project_root=$(get_project_root 2>/dev/null || echo "$PWD")
     local project_settings="$project_root/$PROJECT_SETTINGS_FILE"

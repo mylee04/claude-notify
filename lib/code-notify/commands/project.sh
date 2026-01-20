@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Project-specific command handlers for Claude-Notify
+# Project-specific command handlers for Code-Notify
 
 # Source voice utilities
 PROJECT_CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -82,11 +82,11 @@ enable_notifications_project() {
         # Fallback notification
         if command -v terminal-notifier &> /dev/null; then
             terminal-notifier \
-                -title "Claude-Notify Test ${CHECK_MARK}" \
+                -title "Code-Notify Test ${CHECK_MARK}" \
                 -message "Project notifications enabled for $project_name" \
                 -sound "Glass"
         else
-            osascript -e "display notification \"Project notifications enabled for $project_name\" with title \"Claude-Notify Test\"" 2>/dev/null || true
+            osascript -e "display notification \"Project notifications enabled for $project_name\" with title \"Code-Notify Test\"" 2>/dev/null || true
         fi
     fi
     

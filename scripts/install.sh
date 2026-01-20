@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Claude-Notify Installation Script
+# Code-Notify Installation Script
 # For users who want to install without Homebrew
 
 set -e
@@ -11,7 +11,7 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 RESET='\033[0m'
 
-echo "🔔 Claude-Notify Installer"
+echo "🔔 Code-Notify Installer"
 echo "========================="
 echo ""
 
@@ -31,7 +31,7 @@ case "$OS" in
         echo "  powershell -ExecutionPolicy Bypass -File install-windows.ps1"
         echo ""
         echo "Or download and run directly:"
-        echo "  irm https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/install-windows.ps1 | iex"
+        echo "  irm https://raw.githubusercontent.com/mylee04/code-notify/main/scripts/install-windows.ps1 | iex"
         echo ""
         exit 1
         ;;
@@ -89,7 +89,7 @@ case "$OS" in
 esac
 
 # Install to user's home directory
-INSTALL_DIR="$HOME/.claude-notify"
+INSTALL_DIR="$HOME/.code-notify"
 echo "Installing to: $INSTALL_DIR"
 
 # Create directories
@@ -102,11 +102,11 @@ cp -r bin/* "$INSTALL_DIR/bin/"
 cp -r lib/* "$INSTALL_DIR/lib/"
 
 # Update paths in the main script
-sed -i.bak "s|\$(dirname \"\$SCRIPT_DIR\")/lib/claude-notify|$INSTALL_DIR/lib/claude-notify|g" "$INSTALL_DIR/bin/claude-notify"
-rm "$INSTALL_DIR/bin/claude-notify.bak"
+sed -i.bak "s|\$(dirname \"\$SCRIPT_DIR\")/lib/code-notify|$INSTALL_DIR/lib/code-notify|g" "$INSTALL_DIR/bin/code-notify"
+rm "$INSTALL_DIR/bin/code-notify.bak"
 
 # Make executable
-chmod +x "$INSTALL_DIR/bin/claude-notify"
+chmod +x "$INSTALL_DIR/bin/code-notify"
 
 # Create symlinks in a directory that's likely in PATH
 if [[ -d "$HOME/.local/bin" ]]; then
@@ -119,9 +119,9 @@ else
 fi
 
 # Create symlinks
-ln -sf "$INSTALL_DIR/bin/claude-notify" "$BIN_DIR/claude-notify"
-ln -sf "$INSTALL_DIR/bin/claude-notify" "$BIN_DIR/cn"
-ln -sf "$INSTALL_DIR/bin/claude-notify" "$BIN_DIR/cnp"
+ln -sf "$INSTALL_DIR/bin/code-notify" "$BIN_DIR/code-notify"
+ln -sf "$INSTALL_DIR/bin/code-notify" "$BIN_DIR/cn"
+ln -sf "$INSTALL_DIR/bin/code-notify" "$BIN_DIR/cnp"
 
 echo -e "${GREEN}✅ Installation complete!${RESET}"
 echo ""
@@ -136,7 +136,7 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
 fi
 
 echo "Run these commands to get started:"
-echo "  claude-notify setup    # Initial setup"
+echo "  code-notify setup    # Initial setup"
 echo "  cn on                  # Enable notifications"
 echo ""
-echo "For more info: https://github.com/mylee04/claude-notify"
+echo "For more info: https://github.com/mylee04/code-notify"

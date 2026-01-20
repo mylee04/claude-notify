@@ -17,7 +17,7 @@ description: Shell scripting best practices for cross-platform CLI tools
 #!/bin/bash
 
 # Script description
-# https://github.com/mylee04/claude-notify
+# https://github.com/mylee04/code-notify
 
 set -e  # Exit on error
 ```

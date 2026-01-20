@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude-notify/lib/claude-notify/core/notifier.sh notification"
+            "command": "$HOME/.code-notify/lib/code-notify/core/notifier.sh notification"
           }
         ]
       }
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude-notify/lib/claude-notify/core/notifier.sh stop"
+            "command": "$HOME/.code-notify/lib/code-notify/core/notifier.sh stop"
           }
         ]
       }
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude-notify/lib/claude-notify/core/notifier.sh PreToolUse"
+            "command": "$HOME/.code-notify/lib/code-notify/core/notifier.sh PreToolUse"
           }
         ]
       }

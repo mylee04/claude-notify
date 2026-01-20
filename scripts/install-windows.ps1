@@ -1,11 +1,11 @@
-# Claude-Notify Installation Script for Windows
-# https://github.com/mylee04/claude-notify
+# Code-Notify Installation Script for Windows
+# https://github.com/mylee04/code-notify
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File install-windows.ps1
 #
 # Or run directly in PowerShell:
-#   irm https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/install-windows.ps1 | iex
+#   irm https://raw.githubusercontent.com/mylee04/code-notify/main/scripts/install-windows.ps1 | iex
 
 #Requires -Version 5.1
 
@@ -18,7 +18,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Version
-$VERSION = "1.2.0"
+$VERSION = "1.3.0"
 
 # Colors and formatting
 function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
@@ -29,7 +29,7 @@ function Write-Header { param([string]$Message) Write-Host "`n$Message" -Foregro
 
 # Paths
 $ClaudeHome = "$env:USERPROFILE\.claude"
-$InstallDir = "$env:USERPROFILE\.claude-notify"
+$InstallDir = "$env:USERPROFILE\.code-notify"
 $NotificationsDir = "$ClaudeHome\notifications"
 $LogsDir = "$ClaudeHome\logs"
 
@@ -37,7 +37,7 @@ function Show-Banner {
     Write-Host @"
 
  ====================================
-   Claude-Notify for Windows v$VERSION
+   Code-Notify for Windows v$VERSION
  ====================================
 
 "@ -ForegroundColor Cyan
@@ -88,7 +88,7 @@ function Test-Prerequisites {
 }
 
 function Install-ClaudeNotify {
-    Write-Header "Installing Claude-Notify..."
+    Write-Header "Installing Code-Notify..."
 
     # Create directories
     $directories = @($InstallDir, "$InstallDir\bin", "$InstallDir\lib", $NotificationsDir, $LogsDir)
@@ -101,10 +101,10 @@ function Install-ClaudeNotify {
 
     # Create the main PowerShell module
     $mainScript = @'
-# Claude-Notify PowerShell Module
-# https://github.com/mylee04/claude-notify
+# Code-Notify PowerShell Module
+# https://github.com/mylee04/code-notify
 
-$script:VERSION = "1.2.0"
+$script:VERSION = "1.3.0"
 $script:ClaudeHome = "$env:USERPROFILE\.claude"
 $script:SettingsFile = "$script:ClaudeHome\settings.json"
 $script:NotificationsDir = "$script:ClaudeHome\notifications"
@@ -188,7 +188,7 @@ function Send-Notification {
         $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
         $xml.LoadXml($template)
         $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Claude-Notify").Show($toast)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Code-Notify").Show($toast)
     }
     catch {
         # Final fallback - balloon notification
@@ -261,7 +261,7 @@ function Enable-Notifications {
 
     # Backup existing settings
     if (Test-Path $settingsFile) {
-        $backupDir = "$env:USERPROFILE\.config\claude-notify\backups"
+        $backupDir = "$env:USERPROFILE\.config\code-notify\backups"
         if (-not (Test-Path $backupDir)) {
             New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
         }
@@ -333,7 +333,7 @@ function Enable-Notifications {
     Write-Info "Config: $settingsFile"
 
     # Test notification
-    Send-Notification -Title "Claude-Notify" -Message "Notifications enabled!" -Type "success"
+    Send-Notification -Title "Code-Notify" -Message "Notifications enabled!" -Type "success"
 }
 
 function Disable-Notifications {
@@ -366,7 +366,7 @@ function Disable-Notifications {
 function Show-Status {
     param([switch]$Project)
 
-    Write-Host "`n[i] Claude-Notify Status" -ForegroundColor Cyan
+    Write-Host "`n[i] Code-Notify Status" -ForegroundColor Cyan
     Write-Host "========================`n" -ForegroundColor Cyan
 
     # Global status
@@ -412,7 +412,7 @@ function Show-Status {
         Write-Host "[!] BurntToast: Not installed (using native notifications)" -ForegroundColor Yellow
     }
 
-    Write-Host "`nclaude-notify version $script:VERSION" -ForegroundColor DarkGray
+    Write-Host "`ncode-notify version $script:VERSION" -ForegroundColor DarkGray
 }
 
 function Enable-Voice {
@@ -482,7 +482,7 @@ function Send-TestNotification {
     Write-Host "`n[*] Testing Notifications" -ForegroundColor Cyan
     Write-Host "=========================`n" -ForegroundColor Cyan
 
-    Send-Notification -Title "Claude-Notify Test" -Message "Notifications are working!" -Type "success"
+    Send-Notification -Title "Code-Notify Test" -Message "Notifications are working!" -Type "success"
     Write-Success "Test notification sent!"
 
     if (Test-Path $script:VoiceFile) {
@@ -493,10 +493,10 @@ function Send-TestNotification {
 function Show-Help {
     Write-Host @"
 
-Claude-Notify - Native Windows notifications for Claude Code
+Code-Notify - Native Windows notifications for Claude Code
 
 USAGE:
-    claude-notify <command> [options]
+    code-notify <command> [options]
     cn <command>              # Short alias
     cnp <command>             # Project command alias
 
@@ -517,13 +517,13 @@ PROJECT COMMANDS:
     project voice   Set project-specific voice (or: cnp voice)
 
 EXAMPLES:
-    claude-notify on            # Enable notifications
+    code-notify on            # Enable notifications
     cn off                      # Disable notifications
     cnp on                      # Enable for current project
     cn test                     # Send test notification
 
 MORE INFO:
-    https://github.com/mylee04/claude-notify
+    https://github.com/mylee04/code-notify
 
 "@ -ForegroundColor Gray
 }
@@ -574,7 +574,7 @@ function Invoke-ClaudeNotify {
             }
         }
         "help" { Show-Help }
-        "version" { Write-Host "claude-notify version $script:VERSION" }
+        "version" { Write-Host "code-notify version $script:VERSION" }
         default { Show-Help }
     }
 }
@@ -600,7 +600,7 @@ Export-ModuleMember -Function @(
 
     # Create the notification script (called by hooks)
     $notifyScript = @'
-# Claude-Notify notification script
+# Code-Notify notification script
 # Called by Claude Code hooks
 
 param(
@@ -713,7 +713,7 @@ switch ($HookType.ToLower()) {
         $VoiceMessage = "An error occurred in $ProjectName"
     }
     "test" {
-        $Title = "Claude-Notify Test"
+        $Title = "Code-Notify Test"
         $Message = "Notifications are working correctly!"
         $VoiceMessage = "Test notification successful"
     }
@@ -752,7 +752,7 @@ function Send-DesktopNotification {
         $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
         $xml.LoadXml($template)
         $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Claude-Notify").Show($toast)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Code-Notify").Show($toast)
     }
     catch {
         # Final fallback - balloon notification
@@ -835,28 +835,28 @@ exit 0
 
     # Create CLI wrapper scripts
     $cliWrapper = @'
-# Claude-Notify CLI wrapper
+# Code-Notify CLI wrapper
 param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
-Import-Module "$env:USERPROFILE\.claude-notify\lib\ClaudeNotify.psm1" -Force
+Import-Module "$env:USERPROFILE\.code-notify\lib\ClaudeNotify.psm1" -Force
 Invoke-ClaudeNotify @Args
 '@
 
-    $cliWrapper | Set-Content "$InstallDir\bin\claude-notify.ps1" -Encoding UTF8
+    $cliWrapper | Set-Content "$InstallDir\bin\code-notify.ps1" -Encoding UTF8
 
     # Create cn alias
     $cnWrapper = @'
-# cn - Claude-Notify shortcut
+# cn - Code-Notify shortcut
 param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
-Import-Module "$env:USERPROFILE\.claude-notify\lib\ClaudeNotify.psm1" -Force
+Import-Module "$env:USERPROFILE\.code-notify\lib\ClaudeNotify.psm1" -Force
 Invoke-ClaudeNotify @Args
 '@
     $cnWrapper | Set-Content "$InstallDir\bin\cn.ps1" -Encoding UTF8
 
     # Create cnp alias (project commands)
     $cnpWrapper = @'
-# cnp - Claude-Notify Project shortcut
+# cnp - Code-Notify Project shortcut
 param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
-Import-Module "$env:USERPROFILE\.claude-notify\lib\ClaudeNotify.psm1" -Force
+Import-Module "$env:USERPROFILE\.code-notify\lib\ClaudeNotify.psm1" -Force
 Invoke-ClaudeNotify "project" @Args
 '@
     $cnpWrapper | Set-Content "$InstallDir\bin\cnp.ps1" -Encoding UTF8
@@ -893,17 +893,17 @@ function Add-PowerShellProfile {
 
     $aliasBlock = @"
 
-# Claude-Notify aliases (added by installer)
-Set-Alias -Name claude-notify -Value "$InstallDir\bin\claude-notify.ps1"
+# Code-Notify aliases (added by installer)
+Set-Alias -Name code-notify -Value "$InstallDir\bin\code-notify.ps1"
 Set-Alias -Name cn -Value "$InstallDir\bin\cn.ps1"
 Set-Alias -Name cnp -Value "$InstallDir\bin\cnp.ps1"
-# End Claude-Notify aliases
+# End Code-Notify aliases
 
 "@
 
     if (Test-Path $profilePath) {
         $profileContent = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
-        if ($profileContent -notlike "*Claude-Notify aliases*") {
+        if ($profileContent -notlike "*Code-Notify aliases*") {
             Add-Content -Path $profilePath -Value $aliasBlock
             Write-Success "Added aliases to PowerShell profile"
         } else {
@@ -916,7 +916,7 @@ Set-Alias -Name cnp -Value "$InstallDir\bin\cnp.ps1"
 }
 
 function Uninstall-ClaudeNotify {
-    Write-Header "Uninstalling Claude-Notify..."
+    Write-Header "Uninstalling Code-Notify..."
 
     # Remove installation directory
     if (Test-Path $InstallDir) {
@@ -937,12 +937,12 @@ function Uninstall-ClaudeNotify {
     $profilePath = $PROFILE.CurrentUserAllHosts
     if (Test-Path $profilePath) {
         $content = Get-Content $profilePath -Raw
-        $content = $content -replace "(?s)# Claude-Notify aliases.*?# End Claude-Notify aliases\r?\n?", ""
+        $content = $content -replace "(?s)# Code-Notify aliases.*?# End Code-Notify aliases\r?\n?", ""
         $content | Set-Content $profilePath -Encoding UTF8
         Write-Success "Cleaned PowerShell profile"
     }
 
-    Write-Success "Claude-Notify uninstalled successfully!"
+    Write-Success "Code-Notify uninstalled successfully!"
     Write-Info "Note: Your Claude settings in $ClaudeHome were preserved"
 }
 
@@ -971,7 +971,7 @@ function Show-PostInstall {
     Write-Host "For enhanced notifications (recommended):" -ForegroundColor White
     Write-Host "  Install-Module -Name BurntToast -Scope CurrentUser" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "More info: https://github.com/mylee04/claude-notify" -ForegroundColor DarkGray
+    Write-Host "More info: https://github.com/mylee04/code-notify" -ForegroundColor DarkGray
     Write-Host ""
 }
 

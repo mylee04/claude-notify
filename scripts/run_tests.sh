@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Simple test suite for Claude-Notify
+# Simple test suite for Code-Notify
 
 set -e
 
@@ -36,15 +36,15 @@ cd "$(dirname "$0")/.."
 
 # Test 1: Main executable exists and is executable
 test_start "main executable exists"
-if [[ -x "bin/claude-notify" ]]; then
+if [[ -x "bin/code-notify" ]]; then
     test_pass
 else
-    test_fail "bin/claude-notify not found or not executable"
+    test_fail "bin/code-notify not found or not executable"
 fi
 
 # Test 2: Can show version
 test_start "version command"
-if ./bin/claude-notify version 2>&1 | grep -q "version"; then
+if ./bin/code-notify version 2>&1 | grep -q "version"; then
     test_pass
 else
     test_fail "version command failed"
@@ -52,7 +52,7 @@ fi
 
 # Test 3: Can show help
 test_start "help command"
-if ./bin/claude-notify help 2>&1 | grep -q "USAGE"; then
+if ./bin/code-notify help 2>&1 | grep -q "USAGE"; then
     test_pass
 else
     test_fail "help command failed"
@@ -60,9 +60,9 @@ fi
 
 # Test 4: Library files exist
 test_start "library files"
-if [[ -f "lib/claude-notify/utils/colors.sh" ]] && \
-   [[ -f "lib/claude-notify/utils/detect.sh" ]] && \
-   [[ -f "lib/claude-notify/core/config.sh" ]]; then
+if [[ -f "lib/code-notify/utils/colors.sh" ]] && \
+   [[ -f "lib/code-notify/utils/detect.sh" ]] && \
+   [[ -f "lib/code-notify/core/config.sh" ]]; then
     test_pass
 else
     test_fail "missing library files"
@@ -70,7 +70,7 @@ fi
 
 # Test 5: Command routing (cn alias simulation)
 test_start "cn command routing"
-if CN_TEST=1 ./bin/claude-notify help 2>&1 | grep -q "Claude-Notify"; then
+if CN_TEST=1 ./bin/code-notify help 2>&1 | grep -q "Code-Notify"; then
     test_pass
 else
     test_fail "command routing failed"
@@ -79,7 +79,7 @@ fi
 # Test 6: Check syntax of all shell scripts
 test_start "shell script syntax"
 SYNTAX_ERROR=0
-for script in bin/claude-notify lib/claude-notify/**/*.sh; do
+for script in bin/code-notify lib/code-notify/**/*.sh; do
     if [[ -f "$script" ]]; then
         if ! bash -n "$script" 2>/dev/null; then
             SYNTAX_ERROR=1

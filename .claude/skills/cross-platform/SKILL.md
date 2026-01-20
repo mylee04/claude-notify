@@ -82,7 +82,7 @@ send_linux_notification() {
     if command -v notify-send &> /dev/null; then
         notify-send "$title" "$message" \
             --urgency=normal \
-            --app-name="Claude-Notify"
+            --app-name="Code-Notify"
     elif command -v zenity &> /dev/null; then
         zenity --notification --text="$title\n$message"
     else

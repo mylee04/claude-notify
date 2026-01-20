@@ -59,7 +59,7 @@ ${BOLD}EXAMPLES:${RESET}
     cnp on                  # Enable for current project
 
 ${BOLD}MORE INFO:${RESET}
-    ${DIM}https://github.com/mylee04/claude-notify${RESET}
+    ${DIM}https://github.com/mylee04/code-notify${RESET}
 
 EOF
 }

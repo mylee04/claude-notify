@@ -1,6 +1,6 @@
-# Contributing to Claude-Notify
+# Contributing to Code-Notify
 
-First off, thank you for considering contributing to Claude-Notify! 🎉
+First off, thank you for considering contributing to Code-Notify! 🎉
 
 ## How Can I Contribute?
 
@@ -35,11 +35,11 @@ Enhancement suggestions are welcome! Please:
 
 ```bash
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/claude-notify.git
-cd claude-notify
+git clone https://github.com/YOUR_USERNAME/code-notify.git
+cd code-notify
 
 # Make scripts executable
-chmod +x bin/claude-notify
+chmod +x bin/code-notify
 
 # Add to PATH for testing
 export PATH="$PWD/bin:$PATH"
