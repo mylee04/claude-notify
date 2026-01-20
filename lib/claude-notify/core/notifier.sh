@@ -7,6 +7,52 @@ HOOK_TYPE=${CLAUDE_HOOK_TYPE:-$1}
 STATUS=${2:-"completed"}
 PROJECT_NAME=${3:-$(basename "$PWD")}
 
+# Read hook data from stdin (Claude Code passes JSON with hook context)
+HOOK_DATA=""
+if [[ ! -t 0 ]]; then
+    # Read all stdin data
+    HOOK_DATA=$(cat 2>/dev/null || true)
+fi
+
+# Function to check if notification should be suppressed
+should_suppress_notification() {
+    # Skip suppression checks for test notifications
+    if [[ "$HOOK_TYPE" == "test" ]]; then
+        return 1  # Don't suppress test notifications
+    fi
+
+    # For Stop hooks: Check if stop_hook_active is true
+    # This means Claude is still working (continuing from a previous stop hook)
+    # We should only notify when Claude has truly finished
+    if [[ "$HOOK_TYPE" == "stop" ]] && [[ -n "$HOOK_DATA" ]]; then
+        # Check if stop_hook_active is true (Claude is still working)
+        if echo "$HOOK_DATA" | grep -q '"stop_hook_active":\s*true' 2>/dev/null; then
+            return 0  # Suppress - Claude is still working
+        fi
+    fi
+
+    # Check for auto-accept indicator in environment (Issue #7)
+    if [[ "${CLAUDE_AUTO_ACCEPT:-}" == "true" ]]; then
+        return 0  # Suppress auto-accepted notifications
+    fi
+
+    # Check if hook data indicates auto-acceptance
+    if [[ -n "$HOOK_DATA" ]]; then
+        if echo "$HOOK_DATA" | grep -q '"autoAccepted":\s*true' 2>/dev/null; then
+            return 0  # Suppress auto-accepted notifications
+        fi
+    fi
+
+    return 1  # Don't suppress
+}
+
+# Check if notification should be suppressed
+if [[ "$HOOK_TYPE" == "stop" ]] || [[ "$HOOK_TYPE" == "notification" ]]; then
+    if should_suppress_notification; then
+        exit 0  # Skip this notification
+    fi
+fi
+
 # Set notification parameters based on hook type
 case "$HOOK_TYPE" in
     "stop")

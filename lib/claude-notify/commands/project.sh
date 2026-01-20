@@ -71,10 +71,19 @@ enable_notifications_project() {
     # Send test notification
     echo ""
     info "Sending test notification..."
+    local notify_script=$(get_notify_script)
     if [[ -f "$notify_script" ]]; then
         "$notify_script" "test" "completed" "$project_name"
     else
-        test_notification "silent"
+        # Fallback notification
+        if command -v terminal-notifier &> /dev/null; then
+            terminal-notifier \
+                -title "Claude-Notify Test ${CHECK_MARK}" \
+                -message "Project notifications enabled for $project_name" \
+                -sound "Glass"
+        else
+            osascript -e "display notification \"Project notifications enabled for $project_name\" with title \"Claude-Notify Test\"" 2>/dev/null || true
+        fi
     fi
     
     echo ""

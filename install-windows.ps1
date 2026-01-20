@@ -18,7 +18,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Version
-$VERSION = "1.1.0"
+$VERSION = "1.2.0"
 
 # Colors and formatting
 function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
@@ -104,7 +104,7 @@ function Install-ClaudeNotify {
 # Claude-Notify PowerShell Module
 # https://github.com/mylee04/claude-notify
 
-$script:VERSION = "1.1.0"
+$script:VERSION = "1.2.0"
 $script:ClaudeHome = "$env:USERPROFILE\.claude"
 $script:SettingsFile = "$script:ClaudeHome\settings.json"
 $script:NotificationsDir = "$script:ClaudeHome\notifications"
@@ -123,9 +123,13 @@ function Test-GitInstalled {
 
 function Get-ProjectName {
     if (Test-GitInstalled) {
-        $gitRoot = git rev-parse --show-toplevel 2>$null
-        if ($gitRoot) {
-            return Split-Path $gitRoot -Leaf
+        try {
+            $gitRoot = & git rev-parse --show-toplevel 2>$null
+            if ($LASTEXITCODE -eq 0 -and $gitRoot) {
+                return Split-Path $gitRoot -Leaf
+            }
+        } catch {
+            # Not in a git repo, use folder name
         }
     }
     return Split-Path (Get-Location) -Leaf
@@ -133,9 +137,13 @@ function Get-ProjectName {
 
 function Get-ProjectRoot {
     if (Test-GitInstalled) {
-        $gitRoot = git rev-parse --show-toplevel 2>$null
-        if ($gitRoot) {
-            return $gitRoot
+        try {
+            $gitRoot = & git rev-parse --show-toplevel 2>$null
+            if ($LASTEXITCODE -eq 0 -and $gitRoot) {
+                return $gitRoot
+            }
+        } catch {
+            # Not in a git repo, use current directory
         }
     }
     return (Get-Location).Path
@@ -610,8 +618,67 @@ $ClaudeHome = "$env:USERPROFILE\.claude"
 $VoiceFile = "$ClaudeHome\notifications\voice-enabled"
 $LogFile = "$ClaudeHome\logs\notifications.log"
 
+# Read hook data from stdin (Claude Code passes JSON with hook context)
+$HookData = ""
+try {
+    if ([Console]::IsInputRedirected) {
+        $HookData = [Console]::In.ReadToEnd()
+    }
+} catch {
+    $HookData = ""
+}
+
+# Function to check if notification should be suppressed
+function Test-ShouldSuppressNotification {
+    # Skip suppression checks for test notifications
+    if ($HookType -eq "test") {
+        return $false
+    }
+
+    # For Stop hooks: Check if stop_hook_active is true
+    # This means Claude is still working (continuing from a previous stop hook)
+    # We should only notify when Claude has truly finished
+    if ($HookType -eq "stop" -and $HookData) {
+        if ($HookData -match '"stop_hook_active"\s*:\s*true') {
+            return $true  # Suppress - Claude is still working
+        }
+    }
+
+    # Check for auto-accept environment variable (Issue #7)
+    if ($env:CLAUDE_AUTO_ACCEPT -eq "true") {
+        return $true
+    }
+
+    # Check if hook data indicates auto-acceptance
+    if ($HookData -and $HookData -match '"autoAccepted"\s*:\s*true') {
+        return $true
+    }
+
+    return $false
+}
+
+# Check if notification should be suppressed
+if ($HookType -eq "stop" -or $HookType -eq "notification") {
+    if (Test-ShouldSuppressNotification) {
+        exit 0  # Skip this notification
+    }
+}
+
 if (-not $ProjectName) {
-    $gitRoot = git rev-parse --show-toplevel 2>$null
+    $gitRoot = $null
+    try {
+        # Check if git is available and we're in a git repo
+        $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+        if ($gitCmd) {
+            $gitRoot = & git rev-parse --show-toplevel 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                $gitRoot = $null
+            }
+        }
+    } catch {
+        $gitRoot = $null
+    }
+
     if ($gitRoot) {
         $ProjectName = Split-Path $gitRoot -Leaf
     } else {
@@ -701,7 +768,19 @@ function Send-DesktopNotification {
 # Send voice notification if enabled
 function Send-VoiceNotificationLocal {
     # Check for project-specific voice first
-    $projectRoot = git rev-parse --show-toplevel 2>$null
+    $projectRoot = $null
+    try {
+        $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+        if ($gitCmd) {
+            $projectRoot = & git rev-parse --show-toplevel 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                $projectRoot = $null
+            }
+        }
+    } catch {
+        $projectRoot = $null
+    }
+
     if ($projectRoot) {
         $projectVoice = Join-Path $projectRoot ".claude\voice"
         if (Test-Path $projectVoice) {
