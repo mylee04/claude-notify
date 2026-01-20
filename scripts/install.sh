@@ -31,7 +31,7 @@ case "$OS" in
         echo "  powershell -ExecutionPolicy Bypass -File install-windows.ps1"
         echo ""
         echo "Or download and run directly:"
-        echo "  irm https://raw.githubusercontent.com/mylee04/claude-notify/main/install-windows.ps1 | iex"
+        echo "  irm https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/install-windows.ps1 | iex"
         echo ""
         exit 1
         ;;

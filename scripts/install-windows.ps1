@@ -5,7 +5,7 @@
 #   powershell -ExecutionPolicy Bypass -File install-windows.ps1
 #
 # Or run directly in PowerShell:
-#   irm https://raw.githubusercontent.com/mylee04/claude-notify/main/install-windows.ps1 | iex
+#   irm https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/install-windows.ps1 | iex
 
 #Requires -Version 5.1
 

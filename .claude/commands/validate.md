@@ -26,7 +26,7 @@ shellcheck bin/claude-notify lib/claude-notify/**/*.sh
 ```powershell
 # In PowerShell
 $null = [System.Management.Automation.Language.Parser]::ParseFile(
-    "install-windows.ps1",
+    "scripts/install-windows.ps1",
     [ref]$null,
     [ref]$errors
 )
