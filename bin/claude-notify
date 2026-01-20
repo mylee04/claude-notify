@@ -77,7 +77,13 @@ case "$COMMAND_NAME" in
     "cn")
         # Called as 'cn' - handle global commands directly
         case "${1:-status}" in
-            "on"|"off"|"status"|"test"|"setup"|"voice"|"help"|"version")
+            "help"|"-h"|"--help")
+                show_help
+                ;;
+            "version"|"-v"|"--version")
+                show_version
+                ;;
+            "on"|"off"|"status"|"test"|"setup"|"voice")
                 source "$LIB_DIR/commands/global.sh"
                 handle_global_command "$@"
                 ;;

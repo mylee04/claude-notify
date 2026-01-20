@@ -19,7 +19,6 @@ if [[ -t 1 ]] && [[ "$(tput colors)" -ge 8 ]]; then
 
     # Dim
     DIM=$'\033[2m'
-
     # Reset
     RESET=$'\033[0m'
     
