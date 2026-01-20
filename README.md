@@ -5,7 +5,7 @@
 > **Homebrew**: `brew install mylee04/tools/code-notify`
 
 Desktop notifications for AI coding tools - get alerts when tasks complete or input is needed.
-
+![Code-Notify Intro](assets/multi_tools_support.png)
 ![Code-Notify Banner](assets/banner.png)
 
 [![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
