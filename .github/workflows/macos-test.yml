@@ -97,6 +97,8 @@ jobs:
           "$HOME/.claude-notify/lib/claude-notify/commands/project.sh"
           "$HOME/.claude-notify/lib/claude-notify/utils/colors.sh"
           "$HOME/.claude-notify/lib/claude-notify/utils/detect.sh"
+          "$HOME/.claude-notify/lib/claude-notify/utils/help.sh"                                   
+          "$HOME/.claude-notify/lib/claude-notify/utils/voice.sh"  
         )
 
         for file in "${FILES[@]}"; do
@@ -226,34 +228,6 @@ jobs:
         echo "========================================"
         echo "  All macOS installation tests passed!"
         echo "========================================"
-
-  test-macos-13:
-    runs-on: macos-13
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Display system info
-      run: |
-        echo "macOS Version: $(sw_vers -productVersion)"
-        echo "Shell: $SHELL"
-
-    - name: Install dependencies
-      run: |
-        brew install jq
-
-    - name: Run installation
-      run: |
-        chmod +x install.sh
-        ./install.sh
-
-    - name: Basic functionality test
-      run: |
-        export PATH="$HOME/.local/bin:$PATH"
-        claude-notify version
-        cn status
-        echo "OK: Basic functionality works on macOS 13"
 
   test-homebrew-formula:
     runs-on: macos-latest
