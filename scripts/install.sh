@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Code-Notify Installation Script
+# Desktop notifications for Claude Code, Codex, and Gemini CLI
 # For users who want to install without Homebrew
 
 set -e

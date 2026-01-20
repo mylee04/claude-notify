@@ -1,4 +1,5 @@
 # Code-Notify Installation Script for Windows
+# Desktop notifications for Claude Code, Codex, and Gemini CLI
 # https://github.com/mylee04/code-notify
 #
 # Usage:
