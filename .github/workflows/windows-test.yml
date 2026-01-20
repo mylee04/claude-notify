@@ -4,12 +4,12 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'install-windows.ps1'
+      - 'scripts/install-windows.ps1'
       - '.github/workflows/windows-test.yml'
   pull_request:
     branches: [ main ]
     paths:
-      - 'install-windows.ps1'
+      - 'scripts/install-windows.ps1'
       - '.github/workflows/windows-test.yml'
   workflow_dispatch:  # Allow manual trigger
 
@@ -29,7 +29,7 @@ jobs:
     - name: Test install script syntax
       run: |
         $errors = $null
-        $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content -Path "install-windows.ps1" -Raw), [ref]$errors)
+        $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content -Path "scripts/install-windows.ps1" -Raw), [ref]$errors)
         if ($errors.Count -gt 0) {
           Write-Host "Syntax errors found:" -ForegroundColor Red
           $errors | ForEach-Object { Write-Host "  Line $($_.Token.StartLine): $($_.Message)" -ForegroundColor Red }
@@ -40,7 +40,7 @@ jobs:
     - name: Run installation
       run: |
         # Run installer in silent mode
-        powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Silent
+        powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1 -Silent
 
     - name: Verify installation directories
       run: |
@@ -182,7 +182,7 @@ jobs:
 
     - name: Test uninstall
       run: |
-        powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Uninstall
+        powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1 -Uninstall
 
         if (Test-Path "$env:USERPROFILE\.claude-notify") {
           Write-Host "ERROR: Install directory not removed" -ForegroundColor Red
@@ -211,7 +211,7 @@ jobs:
 
     - name: Run installation
       run: |
-        powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Silent
+        powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1 -Silent
 
     - name: Basic functionality test
       run: |
