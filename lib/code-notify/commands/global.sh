@@ -58,6 +58,9 @@ enable_notifications_global() {
 
     ensure_config_dir
 
+    # Remove kill switch if present
+    rm -f "$HOME/.claude/notifications/disabled"
+
     # If specific tool requested
     if [[ -n "$tool" ]]; then
         enable_single_tool "$tool"
@@ -141,6 +144,9 @@ disable_notifications_global() {
     header "${MUTE} Disabling Notifications"
     echo ""
 
+    # Create kill switch for instant effect on running sessions
+    touch "$HOME/.claude/notifications/disabled"
+
     # If specific tool requested
     if [[ -n "$tool" ]]; then
         disable_single_tool "$tool"
@@ -194,6 +200,12 @@ disable_single_tool() {
 show_status() {
     header "${INFO} Code-Notify Status"
     echo ""
+
+    # Check for kill switch
+    if [[ -f "$HOME/.claude/notifications/disabled" ]]; then
+        echo "  ${MUTE} Kill switch: ${YELLOW}ACTIVE${RESET} (instant disable)"
+        echo ""
+    fi
 
     # Show status for each tool
     echo "AI Tools:"

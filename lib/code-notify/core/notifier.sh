@@ -34,6 +34,11 @@ TOOL_DISPLAY=$(get_tool_display_name "$TOOL_NAME")
 
 # Function to check if notification should be suppressed
 should_suppress_notification() {
+    # Check kill switch first - instant disable without restart
+    if [[ -f "$HOME/.claude/notifications/disabled" ]]; then
+        return 0  # Suppress notification
+    fi
+
     # Skip suppression checks for test notifications
     if [[ "$HOOK_TYPE" == "test" ]]; then
         return 1

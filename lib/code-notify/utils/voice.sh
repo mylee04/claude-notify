@@ -6,6 +6,9 @@
 VOICE_DIR="$HOME/.claude/notifications"
 GLOBAL_VOICE_FILE="$VOICE_DIR/voice-enabled"
 
+# Kill switch file - when present, all notifications are suppressed
+DISABLED_FILE="$VOICE_DIR/disabled"
+
 # Get tool-specific voice file path
 get_tool_voice_file() {
     local tool="$1"
