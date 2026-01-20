@@ -5,7 +5,7 @@
 # Run the test suite
 test:
 	@echo "Running tests..."
-	@./test/run_tests.sh
+	@./scripts/run_tests.sh
 
 # Install locally for development
 install:

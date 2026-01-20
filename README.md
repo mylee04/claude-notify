@@ -113,7 +113,7 @@ brew upgrade claude-notify
 # Download and install
 git clone https://github.com/mylee04/claude-notify.git
 cd claude-notify
-powershell -ExecutionPolicy Bypass -File install-windows.ps1
+powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1
 
 # Or run directly from PowerShell
 irm https://raw.githubusercontent.com/mylee04/claude-notify/main/install-windows.ps1 | iex
@@ -126,18 +126,18 @@ irm https://raw.githubusercontent.com/mylee04/claude-notify/main/install-windows
 # Clone and install
 git clone https://github.com/mylee04/claude-notify.git
 cd claude-notify
-./install.sh
+./scripts/install.sh
 ```
 
 #### Linux (Bash)
 ```bash
 # Download and run the installer
-curl -sSL https://raw.githubusercontent.com/mylee04/claude-notify/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/mylee04/claude-notify/main/scripts/install.sh | bash
 
 # Or clone and install manually
 git clone https://github.com/mylee04/claude-notify.git
 cd claude-notify
-./install.sh
+./scripts/install.sh
 ```
 
 ### Notification Dependencies (Usually Pre-installed)
@@ -571,11 +571,13 @@ claude-notify/
 │       ├── detect.sh         # OS and environment detection
 │       ├── help.sh           # Shared help text
 │       └── voice.sh          # Voice notification utilities
-├── test/
+├── scripts/
+│   ├── install.sh            # Universal installer (macOS/Linux)
+│   ├── install-windows.ps1   # Windows installer
 │   └── run_tests.sh          # Test suite
-├── examples/
+├── docs/
+│   ├── CONTRIBUTING.md       # Contribution guidelines
 │   └── HOOKS_GUIDE.md        # Hook configuration examples
-├── install.sh                # Universal installer script
 ├── Makefile                  # Build and test automation
 └── README.md
 ```
