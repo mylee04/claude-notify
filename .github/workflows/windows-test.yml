@@ -44,7 +44,7 @@ jobs:
 
     - name: Verify installation directories
       run: |
-        $installDir = "$env:USERPROFILE\.claude-notify"
+        $installDir = "$env:USERPROFILE\.code-notify"
         $claudeHome = "$env:USERPROFILE\.claude"
 
         # Check directories exist
@@ -75,10 +75,10 @@ jobs:
     - name: Verify installed files
       run: |
         $files = @(
-          "$env:USERPROFILE\.claude-notify\lib\ClaudeNotify.psm1",
-          "$env:USERPROFILE\.claude-notify\bin\claude-notify.ps1",
-          "$env:USERPROFILE\.claude-notify\bin\cn.ps1",
-          "$env:USERPROFILE\.claude-notify\bin\cnp.ps1",
+          "$env:USERPROFILE\.code-notify\lib\ClaudeNotify.psm1",
+          "$env:USERPROFILE\.code-notify\bin\code-notify.ps1",
+          "$env:USERPROFILE\.code-notify\bin\cn.ps1",
+          "$env:USERPROFILE\.code-notify\bin\cnp.ps1",
           "$env:USERPROFILE\.claude\notifications\notify.ps1"
         )
 
@@ -92,7 +92,7 @@ jobs:
 
     - name: Test module import
       run: |
-        Import-Module "$env:USERPROFILE\.claude-notify\lib\ClaudeNotify.psm1" -Force
+        Import-Module "$env:USERPROFILE\.code-notify\lib\ClaudeNotify.psm1" -Force
 
         # Check exported functions
         $functions = @('Invoke-ClaudeNotify', 'Send-Notification', 'Enable-Notifications', 'Disable-Notifications', 'Show-Status')
@@ -106,20 +106,20 @@ jobs:
 
     - name: Test CLI commands (help)
       run: |
-        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" help
+        & "$env:USERPROFILE\.code-notify\bin\cn.ps1" help
 
     - name: Test CLI commands (version)
       run: |
-        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" version
+        & "$env:USERPROFILE\.code-notify\bin\cn.ps1" version
 
     - name: Test CLI commands (status)
       run: |
-        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" status
+        & "$env:USERPROFILE\.code-notify\bin\cn.ps1" status
 
     - name: Test enable/disable notifications
       run: |
         # Enable
-        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" on
+        & "$env:USERPROFILE\.code-notify\bin\cn.ps1" on
 
         # Check settings.json was created with hooks
         $settingsFile = "$env:USERPROFILE\.claude\settings.json"
@@ -136,7 +136,7 @@ jobs:
         Write-Host "OK: Notifications enabled, hooks configured" -ForegroundColor Green
 
         # Disable
-        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" off
+        & "$env:USERPROFILE\.code-notify\bin\cn.ps1" off
 
         $settings = Get-Content $settingsFile -Raw | ConvertFrom-Json
         if ($settings.hooks) {
@@ -158,7 +158,7 @@ jobs:
         git config user.name "Test"
 
         # Enable project notifications
-        & "$env:USERPROFILE\.claude-notify\bin\cnp.ps1" on
+        & "$env:USERPROFILE\.code-notify\bin\cnp.ps1" on
 
         # Check project settings created
         if (-not (Test-Path "$testProject\.claude\settings.json")) {
@@ -168,10 +168,10 @@ jobs:
         Write-Host "OK: Project notifications enabled" -ForegroundColor Green
 
         # Check status
-        & "$env:USERPROFILE\.claude-notify\bin\cnp.ps1" status
+        & "$env:USERPROFILE\.code-notify\bin\cnp.ps1" status
 
         # Disable
-        & "$env:USERPROFILE\.claude-notify\bin\cnp.ps1" off
+        & "$env:USERPROFILE\.code-notify\bin\cnp.ps1" off
         Write-Host "OK: Project notifications disabled" -ForegroundColor Green
 
     - name: Test notification script
@@ -184,7 +184,7 @@ jobs:
       run: |
         powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1 -Uninstall
 
-        if (Test-Path "$env:USERPROFILE\.claude-notify") {
+        if (Test-Path "$env:USERPROFILE\.code-notify") {
           Write-Host "ERROR: Install directory not removed" -ForegroundColor Red
           exit 1
         }
@@ -215,6 +215,6 @@ jobs:
 
     - name: Basic functionality test
       run: |
-        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" version
-        & "$env:USERPROFILE\.claude-notify\bin\cn.ps1" status
+        & "$env:USERPROFILE\.code-notify\bin\cn.ps1" version
+        & "$env:USERPROFILE\.code-notify\bin\cn.ps1" status
         Write-Host "OK: Basic functionality works on Windows Server 2019" -ForegroundColor Green
