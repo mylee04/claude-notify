@@ -22,10 +22,19 @@ detect_claude_code() {
     return 1
 }
 
-# Detect if terminal-notifier is installed
+# Detect if terminal-notifier is installed (macOS)
 detect_terminal_notifier() {
     if command -v terminal-notifier &> /dev/null; then
         echo "$(which terminal-notifier)"
+        return 0
+    fi
+    return 1
+}
+
+# Detect if wsl-notify-send.exe is installed (WSL)
+detect_wsl_notify_send() {
+    if command -v wsl-notify-send.exe &> /dev/null; then
+        echo "$(which wsl-notify-send.exe)"
         return 0
     fi
     return 1
