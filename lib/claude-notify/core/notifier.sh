@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# Core notification functionality for Claude-Notify
+# Core notification functionality for Code-Notify
+# Supports: Claude Code, Codex, Gemini CLI
 
-# Get the hook type and status from environment or arguments
+# Get arguments: notify.sh <hook_type> <tool_name> [project_name]
 HOOK_TYPE=${CLAUDE_HOOK_TYPE:-$1}
-STATUS=${2:-"completed"}
+TOOL_NAME=${2:-""}
 PROJECT_NAME=${3:-$(basename "$PWD")}
 
 # Read hook data from stdin (Claude Code passes JSON with hook context)
 HOOK_DATA=""
 if [[ ! -t 0 ]]; then
-    # Read all stdin data
     HOOK_DATA=$(cat 2>/dev/null || true)
 fi
 
@@ -19,78 +19,101 @@ NOTIFIER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$NOTIFIER_DIR/../utils/detect.sh"
 source "$NOTIFIER_DIR/../utils/voice.sh"
 
+# Get display name for tool
+get_tool_display_name() {
+    local tool="$1"
+    case "$tool" in
+        "claude") echo "Claude" ;;
+        "codex") echo "Codex" ;;
+        "gemini") echo "Gemini" ;;
+        *) echo "AI" ;;
+    esac
+}
+
+TOOL_DISPLAY=$(get_tool_display_name "$TOOL_NAME")
+
 # Function to check if notification should be suppressed
 should_suppress_notification() {
     # Skip suppression checks for test notifications
     if [[ "$HOOK_TYPE" == "test" ]]; then
-        return 1  # Don't suppress test notifications
+        return 1
     fi
 
     # For Stop hooks: Check if stop_hook_active is true
-    # This means Claude is still working (continuing from a previous stop hook)
-    # We should only notify when Claude has truly finished
     if [[ "$HOOK_TYPE" == "stop" ]] && [[ -n "$HOOK_DATA" ]]; then
-        # Check if stop_hook_active is true (Claude is still working)
         if echo "$HOOK_DATA" | grep -q '"stop_hook_active":\s*true' 2>/dev/null; then
-            return 0  # Suppress - Claude is still working
+            return 0
         fi
     fi
 
-    # Check for auto-accept indicator in environment (Issue #7)
+    # Check for auto-accept indicator
     if [[ "${CLAUDE_AUTO_ACCEPT:-}" == "true" ]]; then
-        return 0  # Suppress auto-accepted notifications
+        return 0
     fi
 
-    # Check if hook data indicates auto-acceptance
     if [[ -n "$HOOK_DATA" ]]; then
         if echo "$HOOK_DATA" | grep -q '"autoAccepted":\s*true' 2>/dev/null; then
-            return 0  # Suppress auto-accepted notifications
+            return 0
         fi
     fi
 
-    return 1  # Don't suppress
+    return 1
 }
 
 # Check if notification should be suppressed
 if [[ "$HOOK_TYPE" == "stop" ]] || [[ "$HOOK_TYPE" == "notification" ]]; then
     if should_suppress_notification; then
-        exit 0  # Skip this notification
+        exit 0
     fi
 fi
 
-# Set notification parameters based on hook type
+# Set notification parameters based on hook type and tool
 case "$HOOK_TYPE" in
     "stop")
-        TITLE="Claude Code ✅"
-        SUBTITLE="Task Complete - $PROJECT_NAME"
-        MESSAGE="Your task has been completed successfully!"
+        TITLE="$TOOL_DISPLAY ✅"
+        SUBTITLE="Task Complete"
+        MESSAGE="$TOOL_DISPLAY completed the task"
+        VOICE_MESSAGE="$TOOL_DISPLAY completed the task"
         SOUND="Glass"
         ;;
     "notification")
-        TITLE="Claude Code 🔔"
-        SUBTITLE="Input Required - $PROJECT_NAME"
-        MESSAGE="Claude needs your input to continue"
+        TITLE="$TOOL_DISPLAY 🔔"
+        SUBTITLE="Input Required"
+        MESSAGE="$TOOL_DISPLAY needs your input"
+        VOICE_MESSAGE="$TOOL_DISPLAY needs your input"
         SOUND="Ping"
         ;;
     "error"|"failed")
-        TITLE="Claude Code ❌"
-        SUBTITLE="Error - $PROJECT_NAME"
-        MESSAGE="An error occurred during task execution"
+        TITLE="$TOOL_DISPLAY ❌"
+        SUBTITLE="Error"
+        MESSAGE="An error occurred in $TOOL_DISPLAY"
+        VOICE_MESSAGE="An error occurred in $TOOL_DISPLAY"
         SOUND="Basso"
         ;;
     "test")
-        TITLE="Claude-Notify Test ✅"
+        TITLE="Code-Notify Test ✅"
         SUBTITLE="$PROJECT_NAME"
-        MESSAGE="Notifications are working correctly!"
+        MESSAGE="Notifications are working!"
+        VOICE_MESSAGE="Notifications are working"
         SOUND="Glass"
         ;;
+    "PreToolUse")
+        # Silent for PreToolUse - just log, no notification
+        exit 0
+        ;;
     *)
-        TITLE="Claude Code 📢"
-        SUBTITLE="Status Update - $PROJECT_NAME"
-        MESSAGE="Task status: $STATUS"
+        TITLE="$TOOL_DISPLAY 📢"
+        SUBTITLE="Status Update"
+        MESSAGE="$TOOL_DISPLAY: $HOOK_TYPE"
+        VOICE_MESSAGE="$TOOL_DISPLAY status update"
         SOUND="Pop"
         ;;
 esac
+
+# Add project name to subtitle if available
+if [[ -n "$PROJECT_NAME" ]] && [[ "$HOOK_TYPE" != "test" ]]; then
+    SUBTITLE="$SUBTITLE - $PROJECT_NAME"
+fi
 
 # Function to send notification on macOS
 send_macos_notification() {
@@ -100,7 +123,7 @@ send_macos_notification() {
             -subtitle "$SUBTITLE" \
             -message "$MESSAGE" \
             -sound "$SOUND" \
-            -group "claude-notify-$PROJECT_NAME" \
+            -group "code-notify-$TOOL_NAME-$PROJECT_NAME" \
             2>/dev/null
     else
         osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\" subtitle \"$SUBTITLE\" sound name \"$SOUND\"" 2>/dev/null
@@ -110,26 +133,22 @@ send_macos_notification() {
 # Function to send notification on Linux
 send_linux_notification() {
     if command -v notify-send &> /dev/null; then
-        # notify-send is the standard Linux notification tool
         notify-send "$TITLE" "$MESSAGE" \
             --urgency=normal \
-            --app-name="Claude-Notify" \
+            --app-name="Code-Notify" \
             --icon=dialog-information \
             2>/dev/null
     elif command -v zenity &> /dev/null; then
-        # Fallback to zenity if available
         zenity --notification \
             --text="$TITLE\n$MESSAGE" \
             2>/dev/null
     else
-        # Last resort: use wall for terminal notification
         echo "[$TITLE] $MESSAGE" | wall 2>/dev/null
     fi
 }
 
 # Function to send notification on Windows
 send_windows_notification() {
-    # Try PowerShell with BurntToast if available
     if command -v powershell &> /dev/null; then
         powershell -Command "
             if (Get-Module -ListAvailable -Name BurntToast) {
@@ -146,9 +165,42 @@ send_windows_notification() {
             }
         " 2>/dev/null
     elif command -v msg &> /dev/null; then
-        # Fallback to msg command
         msg "%USERNAME%" "$TITLE: $MESSAGE" 2>/dev/null
     fi
+}
+
+# Check if voice is enabled for this tool
+should_speak() {
+    # Check tool-specific voice setting first
+    if [[ -n "$TOOL_NAME" ]]; then
+        local tool_voice_file="$HOME/.claude/notifications/voice-$TOOL_NAME"
+        if [[ -f "$tool_voice_file" ]]; then
+            return 0
+        fi
+    fi
+
+    # Fall back to global voice setting
+    local global_voice_file="$HOME/.claude/notifications/voice-enabled"
+    if [[ -f "$global_voice_file" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Get voice setting (tool-specific or global)
+get_voice_setting() {
+    # Check tool-specific voice first
+    if [[ -n "$TOOL_NAME" ]]; then
+        local tool_voice_file="$HOME/.claude/notifications/voice-$TOOL_NAME"
+        if [[ -f "$tool_voice_file" ]]; then
+            cat "$tool_voice_file"
+            return
+        fi
+    fi
+
+    # Fall back to global
+    get_voice "global" 2>/dev/null || echo ""
 }
 
 # Send notification based on OS
@@ -156,10 +208,12 @@ OS=$(detect_os)
 case "$OS" in
     macos)
         send_macos_notification
-        # Add voice notification if enabled
-        VOICE=$(get_voice "global" 2>/dev/null || echo "")
-        if [[ -n "$VOICE" ]]; then
-            say -v "$VOICE" "$MESSAGE"
+        # Voice notification if enabled
+        if should_speak; then
+            VOICE=$(get_voice_setting)
+            if [[ -n "$VOICE" ]]; then
+                say -v "$VOICE" "$VOICE_MESSAGE"
+            fi
         fi
         ;;
     linux)
@@ -174,11 +228,10 @@ case "$OS" in
         ;;
 esac
 
-# Log the notification if log directory exists
+# Log the notification
 LOG_DIR="$HOME/.claude/logs"
 if [[ -d "$LOG_DIR" ]]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$PROJECT_NAME] $TITLE - $SUBTITLE: $MESSAGE" >> "$LOG_DIR/notifications.log"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$TOOL_NAME] [$PROJECT_NAME] $MESSAGE" >> "$LOG_DIR/notifications.log"
 fi
 
-# Exit successfully
 exit 0

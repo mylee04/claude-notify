@@ -2,7 +2,7 @@
 
 # Configuration management for Claude-Notify
 
-# Default paths
+# Default paths - Claude Code
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 GLOBAL_SETTINGS_FILE="$CLAUDE_HOME/settings.json"
 GLOBAL_HOOKS_FILE="$CLAUDE_HOME/hooks.json"  # Legacy support
@@ -14,6 +14,14 @@ BACKUP_DIR="$CONFIG_DIR/backups"
 # Project-level settings
 PROJECT_SETTINGS_FILE=".claude/settings.json"
 PROJECT_SETTINGS_LOCAL_FILE=".claude/settings.local.json"
+
+# Codex paths
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+CODEX_CONFIG_FILE="$CODEX_HOME/config.toml"
+
+# Gemini CLI paths
+GEMINI_HOME="${GEMINI_HOME:-$HOME/.gemini}"
+GEMINI_SETTINGS_FILE="$GEMINI_HOME/settings.json"
 
 # Ensure config directory exists
 ensure_config_dir() {
@@ -229,21 +237,21 @@ enable_hooks_in_settings() {
                 "matcher": "",
                 "hooks": [{
                     "type": "command",
-                    "command": ($script + " notification")
+                    "command": ($script + " notification claude")
                 }]
             }],
             "Stop": [{
                 "matcher": "",
                 "hooks": [{
                     "type": "command",
-                    "command": ($script + " stop")
+                    "command": ($script + " stop claude")
                 }]
             }],
             "PreToolUse": [{
                 "matcher": "Bash",
                 "hooks": [{
                     "type": "command",
-                    "command": ($script + " PreToolUse")
+                    "command": ($script + " PreToolUse claude")
                 }]
             }]
         }')
@@ -260,7 +268,7 @@ enable_hooks_in_settings() {
         "hooks": [
           {
             "type": "command",
-            "command": "$notify_script notification"
+            "command": "$notify_script notification claude"
           }
         ]
       }
@@ -271,7 +279,7 @@ enable_hooks_in_settings() {
         "hooks": [
           {
             "type": "command",
-            "command": "$notify_script stop"
+            "command": "$notify_script stop claude"
           }
         ]
       }
@@ -282,7 +290,7 @@ enable_hooks_in_settings() {
         "hooks": [
           {
             "type": "command",
-            "command": "$notify_script PreToolUse"
+            "command": "$notify_script PreToolUse claude"
           }
         ]
       }
@@ -319,10 +327,10 @@ enable_project_hooks_in_settings() {
     local project_name="${2:-$(get_project_name)}"
     local project_settings="$project_root/$PROJECT_SETTINGS_FILE"
     local notify_script=$(get_notify_script)
-    
+
     # Ensure .claude directory exists
     mkdir -p "$project_root/.claude"
-    
+
     # Create project settings.json with hooks
     cat > "$project_settings" << EOF
 {
@@ -333,7 +341,7 @@ enable_project_hooks_in_settings() {
         "hooks": [
           {
             "type": "command",
-            "command": "$notify_script notification required '$project_name'"
+            "command": "$notify_script notification claude '$project_name'"
           }
         ]
       }
@@ -344,7 +352,7 @@ enable_project_hooks_in_settings() {
         "hooks": [
           {
             "type": "command",
-            "command": "$notify_script stop completed '$project_name'"
+            "command": "$notify_script stop claude '$project_name'"
           }
         ]
       }
@@ -355,7 +363,7 @@ enable_project_hooks_in_settings() {
         "hooks": [
           {
             "type": "command",
-            "command": "$notify_script PreToolUse"
+            "command": "$notify_script PreToolUse claude"
           }
         ]
       }
@@ -370,4 +378,242 @@ is_enabled_project_settings() {
     local project_root=$(get_project_root 2>/dev/null || echo "$PWD")
     local project_settings="$project_root/$PROJECT_SETTINGS_FILE"
     has_claude_notify_hooks "$project_settings"
+}
+
+# ============================================
+# Codex Configuration
+# ============================================
+
+# Check if Codex notifications are enabled
+is_codex_enabled() {
+    if [[ ! -f "$CODEX_CONFIG_FILE" ]]; then
+        return 1
+    fi
+    grep -qE '^notify\s*=' "$CODEX_CONFIG_FILE" 2>/dev/null
+}
+
+# Enable Codex notifications
+enable_codex_hooks() {
+    local notify_script=$(get_notify_script)
+
+    # Ensure .codex directory exists
+    mkdir -p "$CODEX_HOME"
+
+    # Check if config.toml exists
+    if [[ -f "$CODEX_CONFIG_FILE" ]]; then
+        # Backup existing config
+        backup_config "$CODEX_CONFIG_FILE"
+
+        # Remove existing notify line if present
+        if grep -qE '^notify\s*=' "$CODEX_CONFIG_FILE"; then
+            sed -i.bak '/^notify\s*=/d' "$CODEX_CONFIG_FILE"
+            rm -f "$CODEX_CONFIG_FILE.bak"
+        fi
+
+        # Append notify setting
+        echo "" >> "$CODEX_CONFIG_FILE"
+        echo "# Code-Notify: Desktop notifications" >> "$CODEX_CONFIG_FILE"
+        echo "notify = [\"bash\", \"-c\", \"$notify_script stop codex\"]" >> "$CODEX_CONFIG_FILE"
+    else
+        # Create new config.toml
+        cat > "$CODEX_CONFIG_FILE" << EOF
+# Codex CLI Configuration
+# https://developers.openai.com/codex/config-reference/
+
+# Code-Notify: Desktop notifications
+notify = ["bash", "-c", "$notify_script stop codex"]
+EOF
+    fi
+}
+
+# Disable Codex notifications
+disable_codex_hooks() {
+    if [[ ! -f "$CODEX_CONFIG_FILE" ]]; then
+        return 0
+    fi
+
+    # Backup before modifying
+    backup_config "$CODEX_CONFIG_FILE"
+
+    # Remove notify line and comment (BSD sed compatible)
+    sed -i '' '/^# Code-Notify/d' "$CODEX_CONFIG_FILE" 2>/dev/null || sed -i '/^# Code-Notify/d' "$CODEX_CONFIG_FILE"
+    sed -i '' '/^notify.*=/d' "$CODEX_CONFIG_FILE" 2>/dev/null || sed -i '/^notify.*=/d' "$CODEX_CONFIG_FILE"
+}
+
+# ============================================
+# Gemini CLI Configuration
+# ============================================
+
+# Check if Gemini CLI notifications are enabled
+is_gemini_enabled() {
+    if [[ ! -f "$GEMINI_SETTINGS_FILE" ]]; then
+        return 1
+    fi
+    # Check for our hooks in Gemini settings
+    if has_jq; then
+        jq -e '.hooks.AfterAgent != null or .hooks.Notification != null' "$GEMINI_SETTINGS_FILE" &>/dev/null
+    else
+        grep -qE '"(AfterAgent|Notification)"' "$GEMINI_SETTINGS_FILE" 2>/dev/null
+    fi
+}
+
+# Enable Gemini CLI notifications
+enable_gemini_hooks() {
+    local notify_script=$(get_notify_script)
+
+    # Ensure .gemini directory exists
+    mkdir -p "$GEMINI_HOME"
+
+    # Read existing settings or create new
+    local settings="{}"
+    if [[ -f "$GEMINI_SETTINGS_FILE" ]]; then
+        backup_config "$GEMINI_SETTINGS_FILE"
+        settings=$(cat "$GEMINI_SETTINGS_FILE")
+    fi
+
+    if has_jq; then
+        # Use jq to merge settings
+        settings=$(echo "$settings" | jq --arg script "$notify_script" '
+            .tools.enableHooks = true |
+            .hooks.enabled = true |
+            .hooks.Notification = [{
+                "matcher": "",
+                "hooks": [{
+                    "name": "code-notify-notification",
+                    "type": "command",
+                    "command": ($script + " notification gemini"),
+                    "description": "Desktop notification when input needed"
+                }]
+            }] |
+            .hooks.AfterAgent = [{
+                "matcher": "",
+                "hooks": [{
+                    "name": "code-notify-complete",
+                    "type": "command",
+                    "command": ($script + " stop gemini"),
+                    "description": "Desktop notification when task complete"
+                }]
+            }]
+        ')
+        echo "$settings" > "$GEMINI_SETTINGS_FILE"
+    else
+        # Manual JSON construction without jq
+        cat > "$GEMINI_SETTINGS_FILE" << EOF
+{
+  "tools": {
+    "enableHooks": true
+  },
+  "hooks": {
+    "enabled": true,
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "code-notify-notification",
+            "type": "command",
+            "command": "$notify_script notification gemini",
+            "description": "Desktop notification when input needed"
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "code-notify-complete",
+            "type": "command",
+            "command": "$notify_script stop gemini",
+            "description": "Desktop notification when task complete"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+    fi
+}
+
+# Disable Gemini CLI notifications
+disable_gemini_hooks() {
+    if [[ ! -f "$GEMINI_SETTINGS_FILE" ]]; then
+        return 0
+    fi
+
+    backup_config "$GEMINI_SETTINGS_FILE"
+
+    if has_jq; then
+        local settings=$(cat "$GEMINI_SETTINGS_FILE")
+        echo "$settings" | jq 'del(.hooks.Notification) | del(.hooks.AfterAgent)' > "$GEMINI_SETTINGS_FILE"
+    else
+        # Without jq, just remove the hooks section entirely
+        echo '{"tools": {"enableHooks": false}}' > "$GEMINI_SETTINGS_FILE"
+    fi
+}
+
+# ============================================
+# Multi-tool helpers
+# ============================================
+
+# Enable notifications for a specific tool
+enable_tool() {
+    local tool="$1"
+
+    case "$tool" in
+        "claude")
+            enable_hooks_in_settings
+            ;;
+        "codex")
+            enable_codex_hooks
+            ;;
+        "gemini")
+            enable_gemini_hooks
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Disable notifications for a specific tool
+disable_tool() {
+    local tool="$1"
+
+    case "$tool" in
+        "claude")
+            disable_hooks_in_settings
+            ;;
+        "codex")
+            disable_codex_hooks
+            ;;
+        "gemini")
+            disable_gemini_hooks
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Check if a specific tool has notifications enabled
+is_tool_enabled() {
+    local tool="$1"
+
+    case "$tool" in
+        "claude")
+            is_enabled_globally
+            ;;
+        "codex")
+            is_codex_enabled
+            ;;
+        "gemini")
+            is_gemini_enabled
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }

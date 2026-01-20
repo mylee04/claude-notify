@@ -92,3 +92,67 @@ is_claude_code_env() {
     # Check for Claude Code specific environment variables
     [[ -n "$CLAUDE_CODE_SESSION" ]] || [[ -n "$CLAUDE_HOOK_TYPE" ]]
 }
+
+# Detect Codex CLI installation
+detect_codex() {
+    # Check if codex command exists
+    if command -v codex &> /dev/null; then
+        # Return config location
+        local config_dir="$HOME/.codex"
+        echo "$config_dir"
+        return 0
+    fi
+    return 1
+}
+
+# Detect Gemini CLI installation
+detect_gemini_cli() {
+    # Check if gemini command exists
+    if command -v gemini &> /dev/null; then
+        # Return config location
+        local config_dir="$HOME/.gemini"
+        echo "$config_dir"
+        return 0
+    fi
+    return 1
+}
+
+# Get list of all installed AI coding tools
+get_installed_tools() {
+    local tools=()
+
+    if detect_claude_code &> /dev/null; then
+        tools+=("claude")
+    fi
+
+    if detect_codex &> /dev/null; then
+        tools+=("codex")
+    fi
+
+    if detect_gemini_cli &> /dev/null; then
+        tools+=("gemini")
+    fi
+
+    # Return space-separated list
+    echo "${tools[*]}"
+}
+
+# Check if a specific tool is installed
+is_tool_installed() {
+    local tool="$1"
+
+    case "$tool" in
+        "claude")
+            detect_claude_code &> /dev/null
+            ;;
+        "codex")
+            detect_codex &> /dev/null
+            ;;
+        "gemini")
+            detect_gemini_cli &> /dev/null
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}

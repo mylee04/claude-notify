@@ -51,69 +51,214 @@ show_version() {
 
 # Enable notifications globally
 enable_notifications_global() {
-    header "${ROCKET} Enabling Claude-Notify Globally"
+    local tool="${1:-}"
+
+    header "${ROCKET} Enabling Notifications"
     echo ""
-    
+
     ensure_config_dir
-    
+
+    # If specific tool requested
+    if [[ -n "$tool" ]]; then
+        enable_single_tool "$tool"
+        return $?
+    fi
+
+    # No tool specified - enable for all detected tools
+    local installed_tools=$(get_installed_tools)
+
+    if [[ -z "$installed_tools" ]]; then
+        warning "No supported AI tools detected"
+        info "Supported tools: Claude Code, Codex, Gemini CLI"
+        return 1
+    fi
+
+    local enabled_count=0
+    for t in $installed_tools; do
+        if enable_single_tool "$t" "quiet"; then
+            ((enabled_count++))
+        fi
+    done
+
+    echo ""
+    if [[ $enabled_count -gt 0 ]]; then
+        success "Enabled notifications for $enabled_count tool(s)"
+        echo ""
+        info "Sending test notification..."
+        test_notification "silent"
+    else
+        warning "No tools were enabled"
+    fi
+}
+
+# Enable a single tool
+enable_single_tool() {
+    local tool="$1"
+    local quiet="${2:-}"
+
+    # Check if tool is installed
+    if ! is_tool_installed "$tool"; then
+        if [[ "$quiet" != "quiet" ]]; then
+            warning "$tool is not installed"
+        fi
+        return 1
+    fi
+
     # Check if already enabled
-    if is_enabled_globally; then
-        warning "Global notifications are already enabled"
-        info "Config location: $GLOBAL_SETTINGS_FILE"
+    if is_tool_enabled "$tool"; then
+        if [[ "$quiet" != "quiet" ]]; then
+            warning "$tool notifications already enabled"
+        fi
         return 0
     fi
-    
-    info "Enabling notifications in settings.json..."
-    
-    # Backup existing settings
-    if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
-        backup_config "$GLOBAL_SETTINGS_FILE"
+
+    # Enable the tool
+    if [[ "$quiet" != "quiet" ]]; then
+        info "Enabling $tool notifications..."
     fi
-    
-    # Enable hooks in settings.json
-    enable_hooks_in_settings
-    
-    success "Global notifications ENABLED"
-    info "Config updated: $GLOBAL_SETTINGS_FILE"
-    
-    # Send test notification
-    echo ""
-    info "Sending test notification..."
-    test_notification "silent"
+
+    enable_tool "$tool"
+
+    local config_file
+    case "$tool" in
+        "claude") config_file="$GLOBAL_SETTINGS_FILE" ;;
+        "codex") config_file="$CODEX_CONFIG_FILE" ;;
+        "gemini") config_file="$GEMINI_SETTINGS_FILE" ;;
+    esac
+
+    success "$tool: ENABLED"
+    if [[ "$quiet" != "quiet" ]]; then
+        info "Config: $config_file"
+    fi
+
+    return 0
 }
 
 # Disable notifications globally
 disable_notifications_global() {
-    header "${MUTE} Disabling Claude-Notify Globally"
+    local tool="${1:-}"
+
+    header "${MUTE} Disabling Notifications"
     echo ""
-    
-    if ! is_enabled_globally; then
-        warning "Global notifications are already disabled"
+
+    # If specific tool requested
+    if [[ -n "$tool" ]]; then
+        disable_single_tool "$tool"
+        return $?
+    fi
+
+    # No tool specified - disable all enabled tools
+    local disabled_count=0
+
+    for t in claude codex gemini; do
+        if is_tool_enabled "$t"; then
+            if disable_single_tool "$t" "quiet"; then
+                ((disabled_count++))
+            fi
+        fi
+    done
+
+    echo ""
+    if [[ $disabled_count -gt 0 ]]; then
+        success "Disabled notifications for $disabled_count tool(s)"
+    else
+        warning "No tools had notifications enabled"
+    fi
+}
+
+# Disable a single tool
+disable_single_tool() {
+    local tool="$1"
+    local quiet="${2:-}"
+
+    # Check if enabled
+    if ! is_tool_enabled "$tool"; then
+        if [[ "$quiet" != "quiet" ]]; then
+            warning "$tool notifications already disabled"
+        fi
         return 0
     fi
-    
-    # Backup before disabling
-    if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
-        backup_config "$GLOBAL_SETTINGS_FILE"
+
+    # Disable the tool
+    if [[ "$quiet" != "quiet" ]]; then
+        info "Disabling $tool notifications..."
     fi
-    
-    # Disable hooks in settings.json
-    disable_hooks_in_settings
-    
-    success "Global notifications DISABLED"
-    info "Hooks removed from: $GLOBAL_SETTINGS_FILE"
+
+    disable_tool "$tool"
+
+    success "$tool: DISABLED"
+    return 0
 }
 
 # Show current status
 show_status() {
-    header "${INFO} Claude-Notify Status"
+    header "${INFO} Code-Notify Status"
     echo ""
-    get_status_info
-    
+
+    # Show status for each tool
+    echo "AI Tools:"
+    echo ""
+
+    # Claude Code
+    if is_tool_installed "claude"; then
+        if is_tool_enabled "claude"; then
+            echo "  ${CHECK_MARK} Claude Code: ${GREEN}ENABLED${RESET}"
+            echo "     Config: $GLOBAL_SETTINGS_FILE"
+        else
+            echo "  ${MUTE} Claude Code: ${DIM}DISABLED${RESET}"
+        fi
+    else
+        echo "  ${DIM}- Claude Code: not installed${RESET}"
+    fi
+
+    # Codex
+    if is_tool_installed "codex"; then
+        if is_tool_enabled "codex"; then
+            echo "  ${CHECK_MARK} Codex: ${GREEN}ENABLED${RESET}"
+            echo "     Config: $CODEX_CONFIG_FILE"
+        else
+            echo "  ${MUTE} Codex: ${DIM}DISABLED${RESET}"
+        fi
+    else
+        echo "  ${DIM}- Codex: not installed${RESET}"
+    fi
+
+    # Gemini CLI
+    if is_tool_installed "gemini"; then
+        if is_tool_enabled "gemini"; then
+            echo "  ${CHECK_MARK} Gemini CLI: ${GREEN}ENABLED${RESET}"
+            echo "     Config: $GEMINI_SETTINGS_FILE"
+        else
+            echo "  ${MUTE} Gemini CLI: ${DIM}DISABLED${RESET}"
+        fi
+    else
+        echo "  ${DIM}- Gemini CLI: not installed${RESET}"
+    fi
+
+    # Voice status
+    echo ""
+    if is_voice_enabled "global"; then
+        local current_voice=$(get_voice "global")
+        echo "  ${SPEAKER} Voice: ${GREEN}ENABLED${RESET} ($current_voice)"
+    else
+        echo "  ${MUTE} Voice: ${DIM}DISABLED${RESET}"
+    fi
+
+    # Terminal notifier status (macOS)
+    if [[ "$(detect_os)" == "macos" ]]; then
+        echo ""
+        if detect_terminal_notifier &> /dev/null; then
+            echo "  ${CHECK_MARK} terminal-notifier: ${GREEN}INSTALLED${RESET}"
+        else
+            echo "  ${WARNING} terminal-notifier: ${YELLOW}NOT INSTALLED${RESET}"
+            echo "     Install with: ${CYAN}brew install terminal-notifier${RESET}"
+        fi
+    fi
+
     # Show version
     echo ""
-    dim "claude-notify version $VERSION"
-    
+    dim "code-notify version $VERSION"
+
     # Check for updates if --check-updates flag is passed
     if [[ "$1" == "--check-updates" ]]; then
         check_for_updates
@@ -258,8 +403,10 @@ check_for_updates() {
 }
 
 # Handle voice commands
+# Usage: cn voice on [tool], cn voice off [tool], cn voice status
 handle_voice_command() {
     local subcommand="${1:-status}"
+    local tool="${2:-}"
 
     case "$subcommand" in
         "on")
@@ -275,29 +422,74 @@ handle_voice_command() {
             read -p "Which voice would you like? (default: Samantha) " voice
             voice=${voice:-Samantha}
 
-            # Enable voice
-            enable_voice "$voice" "global"
-            success "Voice notifications ENABLED with voice: $voice"
-
-            # Test it
-            test_voice "$voice" "Voice notifications enabled, Master"
+            if [[ -n "$tool" ]]; then
+                # Enable for specific tool
+                enable_voice "$voice" "tool" "$tool"
+                success "Voice ENABLED for $tool with voice: $voice"
+                test_voice "$voice" "$tool voice notifications enabled"
+            else
+                # Enable globally (for all tools)
+                enable_voice "$voice" "global"
+                success "Voice ENABLED globally with voice: $voice"
+                test_voice "$voice" "Voice notifications enabled for all tools"
+            fi
             ;;
 
         "off")
             header "${MUTE} Disabling Voice Notifications"
             echo ""
-            disable_voice "global"
-            success "Voice notifications DISABLED"
+
+            if [[ -n "$tool" ]]; then
+                # Disable for specific tool
+                disable_voice "tool" "$tool"
+                success "Voice DISABLED for $tool"
+            else
+                # Disable all voice settings
+                disable_voice "all"
+                success "Voice DISABLED for all tools"
+            fi
             ;;
 
         "status"|*)
-            if is_voice_enabled "global"; then
-                local current_voice
-                current_voice=$(get_voice "global")
-                status_enabled "Voice notifications: ENABLED (using $current_voice)"
-            else
-                status_disabled "Voice notifications: DISABLED"
-            fi
+            show_voice_status
             ;;
     esac
+}
+
+# Show detailed voice status
+show_voice_status() {
+    header "${SPEAKER} Voice Status"
+    echo ""
+
+    # Global voice
+    if is_voice_enabled "global"; then
+        local voice=$(get_voice "global")
+        echo "  ${CHECK_MARK} Global: ${GREEN}ENABLED${RESET} ($voice)"
+    else
+        echo "  ${MUTE} Global: ${DIM}DISABLED${RESET}"
+    fi
+
+    # Per-tool voice
+    for tool in claude codex gemini; do
+        local tool_display
+        case "$tool" in
+            "claude") tool_display="Claude" ;;
+            "codex") tool_display="Codex" ;;
+            "gemini") tool_display="Gemini" ;;
+        esac
+
+        if is_voice_enabled "tool" "$tool"; then
+            local voice=$(get_voice "tool" "$tool")
+            echo "  ${CHECK_MARK} $tool_display: ${GREEN}ENABLED${RESET} ($voice)"
+        else
+            echo "  ${DIM}- $tool_display: uses global setting${RESET}"
+        fi
+    done
+
+    echo ""
+    info "Commands:"
+    echo "  ${CYAN}cn voice on${RESET}          Enable for all tools"
+    echo "  ${CYAN}cn voice on claude${RESET}   Enable for Claude only"
+    echo "  ${CYAN}cn voice off${RESET}         Disable all"
+    echo "  ${CYAN}cn voice off codex${RESET}   Disable for Codex only"
 }
