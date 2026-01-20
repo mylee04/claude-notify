@@ -43,12 +43,12 @@ jobs:
 
     - name: Test main script syntax
       run: |
-        bash -n bin/claude-notify
+        bash -n bin/code-notify
         echo "Main script syntax OK"
 
     - name: Test lib scripts syntax
       run: |
-        for file in lib/claude-notify/**/*.sh; do
+        for file in lib/code-notify/**/*.sh; do
           echo "Checking: $file"
           bash -n "$file"
         done
@@ -61,7 +61,7 @@ jobs:
 
     - name: Verify installation directories
       run: |
-        INSTALL_DIR="$HOME/.claude-notify"
+        INSTALL_DIR="$HOME/.code-notify"
 
         if [[ ! -d "$INSTALL_DIR" ]]; then
           echo "ERROR: Install directory not created: $INSTALL_DIR"
@@ -90,15 +90,15 @@ jobs:
     - name: Verify installed files
       run: |
         FILES=(
-          "$HOME/.claude-notify/bin/claude-notify"
-          "$HOME/.claude-notify/lib/claude-notify/core/config.sh"
-          "$HOME/.claude-notify/lib/claude-notify/core/notifier.sh"
-          "$HOME/.claude-notify/lib/claude-notify/commands/global.sh"
-          "$HOME/.claude-notify/lib/claude-notify/commands/project.sh"
-          "$HOME/.claude-notify/lib/claude-notify/utils/colors.sh"
-          "$HOME/.claude-notify/lib/claude-notify/utils/detect.sh"
-          "$HOME/.claude-notify/lib/claude-notify/utils/help.sh"                                   
-          "$HOME/.claude-notify/lib/claude-notify/utils/voice.sh"  
+          "$HOME/.code-notify/bin/code-notify"
+          "$HOME/.code-notify/lib/code-notify/core/config.sh"
+          "$HOME/.code-notify/lib/code-notify/core/notifier.sh"
+          "$HOME/.code-notify/lib/code-notify/commands/global.sh"
+          "$HOME/.code-notify/lib/code-notify/commands/project.sh"
+          "$HOME/.code-notify/lib/code-notify/utils/colors.sh"
+          "$HOME/.code-notify/lib/code-notify/utils/detect.sh"
+          "$HOME/.code-notify/lib/code-notify/utils/help.sh"                                   
+          "$HOME/.code-notify/lib/code-notify/utils/voice.sh"  
         )
 
         for file in "${FILES[@]}"; do
@@ -113,11 +113,11 @@ jobs:
       run: |
         BIN_DIR="$HOME/.local/bin"
 
-        if [[ ! -L "$BIN_DIR/claude-notify" ]]; then
-          echo "ERROR: claude-notify symlink not created"
+        if [[ ! -L "$BIN_DIR/code-notify" ]]; then
+          echo "ERROR: code-notify symlink not created"
           exit 1
         fi
-        echo "OK: claude-notify symlink exists"
+        echo "OK: code-notify symlink exists"
 
         if [[ ! -L "$BIN_DIR/cn" ]]; then
           echo "ERROR: cn symlink not created"
@@ -136,10 +136,10 @@ jobs:
         export PATH="$HOME/.local/bin:$PATH"
 
         # Test help
-        claude-notify help
+        code-notify help
 
         # Test version
-        claude-notify version
+        code-notify version
 
     - name: Test CLI aliases
       run: |
@@ -215,7 +215,7 @@ jobs:
     - name: Test notifier script
       run: |
         # Test the notification script directly (may not show UI in CI)
-        NOTIFIER="$HOME/.claude-notify/lib/claude-notify/core/notifier.sh"
+        NOTIFIER="$HOME/.code-notify/lib/code-notify/core/notifier.sh"
         if [[ -f "$NOTIFIER" ]]; then
           chmod +x "$NOTIFIER"
           "$NOTIFIER" test 2>&1 || true
@@ -239,10 +239,10 @@ jobs:
     - name: Test direct script execution
       run: |
         # Test running directly without installation
-        chmod +x bin/claude-notify
+        chmod +x bin/code-notify
 
         # Export required paths
         export PATH="$PWD/bin:$PATH"
 
         # This should show help (may fail if deps not met, which is OK)
-        bin/claude-notify help || echo "Direct execution test complete"
+        bin/code-notify help || echo "Direct execution test complete"
