@@ -32,6 +32,35 @@ get_tool_display_name() {
 
 TOOL_DISPLAY=$(get_tool_display_name "$TOOL_NAME")
 
+# Rate limiting for stop notifications (prevents spam from parallel sub-agents)
+RATE_LIMIT_DIR="$HOME/.claude/notifications"
+RATE_LIMIT_SECONDS=10
+
+is_rate_limited() {
+    local lock_file="$RATE_LIMIT_DIR/last_stop_notification"
+
+    if [[ ! -f "$lock_file" ]]; then
+        return 1  # No previous notification, not rate limited
+    fi
+
+    local last_time
+    last_time=$(cat "$lock_file" 2>/dev/null || echo "0")
+    local current_time
+    current_time=$(date +%s)
+    local elapsed=$((current_time - last_time))
+
+    if [[ $elapsed -lt $RATE_LIMIT_SECONDS ]]; then
+        return 0  # Rate limited
+    fi
+
+    return 1  # Not rate limited
+}
+
+update_rate_limit() {
+    mkdir -p "$RATE_LIMIT_DIR"
+    date +%s > "$RATE_LIMIT_DIR/last_stop_notification"
+}
+
 # Function to check if notification should be suppressed
 should_suppress_notification() {
     # Check kill switch first - instant disable without restart
@@ -42,6 +71,13 @@ should_suppress_notification() {
     # Skip suppression checks for test notifications
     if [[ "$HOOK_TYPE" == "test" ]]; then
         return 1
+    fi
+
+    # Rate limit stop notifications to prevent spam from parallel sub-agents
+    if [[ "$HOOK_TYPE" == "stop" ]]; then
+        if is_rate_limited; then
+            return 0  # Suppress - too soon since last notification
+        fi
     fi
 
     # For Stop hooks: Check if stop_hook_active is true
@@ -70,6 +106,11 @@ if [[ "$HOOK_TYPE" == "stop" ]] || [[ "$HOOK_TYPE" == "notification" ]]; then
     if should_suppress_notification; then
         exit 0
     fi
+fi
+
+# Update rate limit timestamp for stop notifications
+if [[ "$HOOK_TYPE" == "stop" ]]; then
+    update_rate_limit
 fi
 
 # Set notification parameters based on hook type and tool
