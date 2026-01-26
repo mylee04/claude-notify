@@ -95,12 +95,35 @@ echo "Installing to: $INSTALL_DIR"
 
 # Create directories
 mkdir -p "$INSTALL_DIR/bin"
-mkdir -p "$INSTALL_DIR/lib"
+mkdir -p "$INSTALL_DIR/lib/code-notify/commands"
+mkdir -p "$INSTALL_DIR/lib/code-notify/core"
+mkdir -p "$INSTALL_DIR/lib/code-notify/utils"
 mkdir -p "$HOME/.claude/notifications"
 
-# Copy files
-cp -r bin/* "$INSTALL_DIR/bin/"
-cp -r lib/* "$INSTALL_DIR/lib/"
+# GitHub raw URL base
+GITHUB_RAW="https://raw.githubusercontent.com/mylee04/code-notify/main"
+
+# Check if running locally (repo exists) or via curl (need to download)
+if [[ -d "bin" ]] && [[ -d "lib" ]]; then
+    echo "Installing from local files..."
+    cp -r bin/* "$INSTALL_DIR/bin/"
+    cp -r lib/* "$INSTALL_DIR/lib/"
+else
+    echo "Downloading files from GitHub..."
+
+    # Download main script
+    curl -fsSL "$GITHUB_RAW/bin/code-notify" -o "$INSTALL_DIR/bin/code-notify"
+
+    # Download lib files
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/commands/global.sh" -o "$INSTALL_DIR/lib/code-notify/commands/global.sh"
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/commands/project.sh" -o "$INSTALL_DIR/lib/code-notify/commands/project.sh"
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/core/config.sh" -o "$INSTALL_DIR/lib/code-notify/core/config.sh"
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/core/notifier.sh" -o "$INSTALL_DIR/lib/code-notify/core/notifier.sh"
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/utils/colors.sh" -o "$INSTALL_DIR/lib/code-notify/utils/colors.sh"
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/utils/detect.sh" -o "$INSTALL_DIR/lib/code-notify/utils/detect.sh"
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/utils/help.sh" -o "$INSTALL_DIR/lib/code-notify/utils/help.sh"
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/utils/voice.sh" -o "$INSTALL_DIR/lib/code-notify/utils/voice.sh"
+fi
 
 # Update paths in the main script
 sed -i.bak "s|\$(dirname \"\$SCRIPT_DIR\")/lib/code-notify|$INSTALL_DIR/lib/code-notify|g" "$INSTALL_DIR/bin/code-notify"
