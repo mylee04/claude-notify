@@ -131,6 +131,7 @@ rm "$INSTALL_DIR/bin/code-notify.bak"
 
 # Make executable
 chmod +x "$INSTALL_DIR/bin/code-notify"
+chmod +x "$INSTALL_DIR/lib/code-notify/core/notifier.sh"
 
 # Create symlinks in a directory that's likely in PATH
 if [[ -d "$HOME/.local/bin" ]]; then
