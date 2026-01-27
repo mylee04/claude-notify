@@ -102,6 +102,8 @@ When enabled, it adds hooks that call the notification script when tasks complet
 
 ### Alert Types
 
+<img src="assets/cn-status-v1.4.0.png" width="60%" alt="cn status showing alert types"/>
+
 By default, notifications only fire when the AI is idle and waiting for input (`idle_prompt`). You can customize this:
 
 ```bash
