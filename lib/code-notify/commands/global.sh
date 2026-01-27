@@ -31,6 +31,9 @@ handle_global_command() {
         "voice")
             handle_voice_command "$@"
             ;;
+        "alerts")
+            handle_alerts_command "$@"
+            ;;
         "help")
             show_help
             ;;
@@ -255,6 +258,10 @@ show_status() {
     else
         echo "  ${MUTE} Voice: ${DIM}DISABLED${RESET}"
     fi
+
+    # Alert types
+    local alert_types=$(get_notify_types)
+    echo "  ${BELL} Alert types: ${CYAN}$alert_types${RESET}"
 
     # Terminal notifier status (macOS)
     if [[ "$(detect_os)" == "macos" ]]; then
@@ -504,4 +511,173 @@ show_voice_status() {
     echo "  ${CYAN}cn voice on claude${RESET}   Enable for Claude only"
     echo "  ${CYAN}cn voice off${RESET}         Disable all"
     echo "  ${CYAN}cn voice off codex${RESET}   Disable for Codex only"
+}
+
+# ============================================
+# Alert Types Management
+# ============================================
+
+# Handle alerts commands
+# Usage: cn alerts, cn alerts add <type>, cn alerts remove <type>, cn alerts reset
+handle_alerts_command() {
+    local subcommand="${1:-}"
+    local type="${2:-}"
+
+    case "$subcommand" in
+        "")
+            show_alerts_status
+            ;;
+        "add")
+            if [[ -z "$type" ]]; then
+                error "Please specify a notification type"
+                echo ""
+                show_available_alert_types
+                return 1
+            fi
+            add_alert_type "$type"
+            ;;
+        "remove"|"rm")
+            if [[ -z "$type" ]]; then
+                error "Please specify a notification type to remove"
+                return 1
+            fi
+            remove_alert_type "$type"
+            ;;
+        "reset")
+            reset_alert_types
+            ;;
+        "help"|"-h"|"--help")
+            show_alerts_help
+            ;;
+        *)
+            error "Unknown alerts command: $subcommand"
+            show_alerts_help
+            return 1
+            ;;
+    esac
+}
+
+# Show current alert types status
+show_alerts_status() {
+    header "${BELL} Alert Types"
+    echo ""
+
+    local current=$(get_notify_types)
+
+    echo "  Current configuration:"
+    echo "  Matcher: ${CYAN}$current${RESET}"
+    echo ""
+
+    echo "  Active types:"
+    if is_notify_type_enabled "idle_prompt"; then
+        echo "    ${CHECK_MARK} ${GREEN}idle_prompt${RESET} - AI is waiting for your input (60+ sec idle)"
+    else
+        echo "    ${MUTE} ${DIM}idle_prompt${RESET}"
+    fi
+
+    if is_notify_type_enabled "permission_prompt"; then
+        echo "    ${CHECK_MARK} ${GREEN}permission_prompt${RESET} - AI needs tool permission (Y/n)"
+    else
+        echo "    ${MUTE} ${DIM}permission_prompt${RESET}"
+    fi
+
+    if is_notify_type_enabled "auth_success"; then
+        echo "    ${CHECK_MARK} ${GREEN}auth_success${RESET} - Authentication success"
+    else
+        echo "    ${MUTE} ${DIM}auth_success${RESET}"
+    fi
+
+    if is_notify_type_enabled "elicitation_dialog"; then
+        echo "    ${CHECK_MARK} ${GREEN}elicitation_dialog${RESET} - MCP tool input needed"
+    else
+        echo "    ${MUTE} ${DIM}elicitation_dialog${RESET}"
+    fi
+
+    echo ""
+    info "Examples:"
+    echo "  ${CYAN}cn alerts add permission_prompt${RESET}   # Also notify on tool permission requests"
+    echo "  ${CYAN}cn alerts add auth_success${RESET}        # Also notify on auth success"
+    echo "  ${CYAN}cn alerts remove permission_prompt${RESET} # Stop permission notifications"
+    echo "  ${CYAN}cn alerts reset${RESET}                   # Back to idle_prompt only"
+    echo ""
+    dim "After changing, run 'cn on' to apply the new settings."
+}
+
+# Show available alert types
+show_available_alert_types() {
+    echo "Available notification types:"
+    echo "  ${CYAN}idle_prompt${RESET}        - AI is waiting for your input (recommended)"
+    echo "  ${CYAN}permission_prompt${RESET}  - AI needs tool permission (can be noisy)"
+    echo "  ${CYAN}auth_success${RESET}       - Authentication success"
+    echo "  ${CYAN}elicitation_dialog${RESET} - MCP tool input needed"
+}
+
+# Add an alert type
+add_alert_type() {
+    local type="$1"
+
+    # Validate type
+    case "$type" in
+        "idle_prompt"|"permission_prompt"|"auth_success"|"elicitation_dialog")
+            ;;
+        *)
+            error "Unknown notification type: $type"
+            echo ""
+            show_available_alert_types
+            return 1
+            ;;
+    esac
+
+    if is_notify_type_enabled "$type"; then
+        warning "$type is already enabled"
+        return 0
+    fi
+
+    add_notify_type "$type"
+    success "Added: $type"
+    echo ""
+    info "Run ${CYAN}cn on${RESET} to apply changes"
+}
+
+# Remove an alert type
+remove_alert_type() {
+    local type="$1"
+
+    if ! is_notify_type_enabled "$type"; then
+        warning "$type is not currently enabled"
+        return 0
+    fi
+
+    remove_notify_type "$type"
+    success "Removed: $type"
+    echo ""
+    info "Run ${CYAN}cn on${RESET} to apply changes"
+}
+
+# Reset alert types to default
+reset_alert_types() {
+    reset_notify_types
+    success "Reset to default: idle_prompt"
+    echo ""
+    info "Run ${CYAN}cn on${RESET} to apply changes"
+}
+
+# Show alerts help
+show_alerts_help() {
+    echo ""
+    echo "Usage: cn alerts [command] [type]"
+    echo ""
+    echo "Commands:"
+    echo "  (none)         Show current alert type configuration"
+    echo "  add <type>     Add a notification type"
+    echo "  remove <type>  Remove a notification type"
+    echo "  reset          Reset to default (idle_prompt only)"
+    echo ""
+    show_available_alert_types
+    echo ""
+    echo "Examples:"
+    echo "  cn alerts                        # Show current config"
+    echo "  cn alerts add permission_prompt  # Also notify on permission requests"
+    echo "  cn alerts remove permission_prompt"
+    echo "  cn alerts reset                  # Back to idle_prompt only"
 }

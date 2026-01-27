@@ -15,6 +15,16 @@ BACKUP_DIR="$CONFIG_DIR/backups"
 PROJECT_SETTINGS_FILE=".claude/settings.json"
 PROJECT_SETTINGS_LOCAL_FILE=".claude/settings.local.json"
 
+# Notification types configuration
+NOTIFY_TYPES_FILE="$HOME/.claude/notifications/notify-types"
+DEFAULT_NOTIFY_TYPE="idle_prompt"
+
+# Available notification types:
+# - idle_prompt: AI is waiting for user input (after 60+ seconds idle)
+# - permission_prompt: AI needs permission to use a tool
+# - auth_success: Authentication success notifications
+# - elicitation_dialog: MCP tool input needed
+
 # Codex paths
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CODEX_CONFIG_FILE="$CODEX_HOME/config.toml"
@@ -223,18 +233,19 @@ get_status_info() {
 # Enable hooks in settings.json (new format)
 enable_hooks_in_settings() {
     local notify_script=$(get_notify_script)
-    
+    local notify_matcher=$(get_notify_matcher)
+
     # Read existing settings or create new
     local settings="{}"
     if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
         settings=$(cat "$GLOBAL_SETTINGS_FILE")
     fi
-    
+
     # Add hooks using jq if available
     if has_jq; then
-        settings=$(echo "$settings" | jq --arg script "$notify_script" '.hooks = {
+        settings=$(echo "$settings" | jq --arg script "$notify_script" --arg matcher "$notify_matcher" '.hooks = {
             "Notification": [{
-                "matcher": "",
+                "matcher": $matcher,
                 "hooks": [{
                     "type": "command",
                     "command": ($script + " notification claude")
@@ -264,7 +275,7 @@ enable_hooks_in_settings() {
   "hooks": {
     "Notification": [
       {
-        "matcher": "",
+        "matcher": "$notify_matcher",
         "hooks": [
           {
             "type": "command",
@@ -327,6 +338,7 @@ enable_project_hooks_in_settings() {
     local project_name="${2:-$(get_project_name)}"
     local project_settings="$project_root/$PROJECT_SETTINGS_FILE"
     local notify_script=$(get_notify_script)
+    local notify_matcher=$(get_notify_matcher)
 
     # Ensure .claude directory exists
     mkdir -p "$project_root/.claude"
@@ -337,7 +349,7 @@ enable_project_hooks_in_settings() {
   "hooks": {
     "Notification": [
       {
-        "matcher": "",
+        "matcher": "$notify_matcher",
         "hooks": [
           {
             "type": "command",
@@ -616,4 +628,72 @@ is_tool_enabled() {
             return 1
             ;;
     esac
+}
+
+# ============================================
+# Notification Types Management
+# ============================================
+
+# Get current notification types (returns pipe-separated list)
+get_notify_types() {
+    if [[ -f "$NOTIFY_TYPES_FILE" ]]; then
+        cat "$NOTIFY_TYPES_FILE"
+    else
+        echo "$DEFAULT_NOTIFY_TYPE"
+    fi
+}
+
+# Set notification types
+set_notify_types() {
+    local types="$1"
+    mkdir -p "$(dirname "$NOTIFY_TYPES_FILE")"
+    echo "$types" > "$NOTIFY_TYPES_FILE"
+}
+
+# Add a notification type
+add_notify_type() {
+    local type="$1"
+    local current=$(get_notify_types)
+
+    if [[ "$current" == *"$type"* ]]; then
+        return 0  # Already exists
+    fi
+
+    if [[ -z "$current" ]]; then
+        set_notify_types "$type"
+    else
+        set_notify_types "$current|$type"
+    fi
+}
+
+# Remove a notification type
+remove_notify_type() {
+    local type="$1"
+    local current=$(get_notify_types)
+
+    # Remove the type (handle edge cases)
+    local new_types=$(echo "$current" | sed "s/|$type//g; s/$type|//g; s/^$type$//g")
+
+    if [[ -z "$new_types" ]]; then
+        new_types="$DEFAULT_NOTIFY_TYPE"
+    fi
+
+    set_notify_types "$new_types"
+}
+
+# Check if a notification type is enabled
+is_notify_type_enabled() {
+    local type="$1"
+    local current=$(get_notify_types)
+    [[ "$current" == *"$type"* ]]
+}
+
+# Reset to default notification type
+reset_notify_types() {
+    set_notify_types "$DEFAULT_NOTIFY_TYPE"
+}
+
+# Get matcher pattern for current notification types
+get_notify_matcher() {
+    get_notify_types
 }

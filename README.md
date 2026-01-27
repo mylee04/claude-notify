@@ -11,7 +11,7 @@ Desktop notifications for AI coding tools - get alerts when tasks complete or in
   <img src="assets/multi-tools-support-02.png" width="48%" alt="All tools enabled"/>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-supported-green.svg)](https://www.apple.com/macos)
 [![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
@@ -76,6 +76,7 @@ curl -s https://raw.githubusercontent.com/mylee04/code-notify/main/docs/installa
 | `cn off` | Disable notifications |
 | `cn test` | Send test notification |
 | `cn status` | Show current status |
+| `cn alerts` | Configure which events trigger notifications |
 | `cn voice on` | Enable voice (macOS, Windows) |
 | `cn voice on claude` | Enable voice for Claude only |
 | `cnp on` | Enable for current project only |
@@ -94,10 +95,28 @@ When enabled, it adds hooks that call the notification script when tasks complet
 {
   "hooks": {
     "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "notify.sh stop claude" }] }],
-    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "notify.sh notification claude" }] }]
+    "Notification": [{ "matcher": "idle_prompt", "hooks": [{ "type": "command", "command": "notify.sh notification claude" }] }]
   }
 }
 ```
+
+### Alert Types
+
+By default, notifications only fire when the AI is idle and waiting for input (`idle_prompt`). You can customize this:
+
+```bash
+cn alerts                          # Show current config
+cn alerts add permission_prompt    # Also notify on tool permission requests
+cn alerts remove permission_prompt # Remove permission notifications
+cn alerts reset                    # Back to default (idle_prompt only)
+```
+
+| Type | Description |
+|------|-------------|
+| `idle_prompt` | AI is waiting for your input (default) |
+| `permission_prompt` | AI needs tool permission (Y/n) |
+| `auth_success` | Authentication success |
+| `elicitation_dialog` | MCP tool input needed |
 
 ## Troubleshooting
 
