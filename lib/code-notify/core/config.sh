@@ -257,13 +257,6 @@ enable_hooks_in_settings() {
                     "type": "command",
                     "command": ($script + " stop claude")
                 }]
-            }],
-            "PreToolUse": [{
-                "matcher": "Bash",
-                "hooks": [{
-                    "type": "command",
-                    "command": ($script + " PreToolUse claude")
-                }]
             }]
         }')
         echo "$settings" > "$GLOBAL_SETTINGS_FILE"
@@ -291,17 +284,6 @@ enable_hooks_in_settings() {
           {
             "type": "command",
             "command": "$notify_script stop claude"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$notify_script PreToolUse claude"
           }
         ]
       }
@@ -365,17 +347,6 @@ enable_project_hooks_in_settings() {
           {
             "type": "command",
             "command": "$notify_script stop claude '$project_name'"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$notify_script PreToolUse claude"
           }
         ]
       }

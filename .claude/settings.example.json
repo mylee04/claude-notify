@@ -3,8 +3,8 @@
   "hooks": {
     "Notification": [
       {
-        "matcher": "",
-        "_description": "Triggers when Claude needs user input",
+        "matcher": "idle_prompt",
+        "_description": "Triggers when Claude needs user input (idle for 60+ seconds)",
         "hooks": [
           {
             "type": "command",
@@ -15,25 +15,12 @@
     ],
     "Stop": [
       {
-        "matcher": "^(?!.*Bash).*$",
-        "_description": "Triggers when tasks complete (excludes Bash commands to reduce noise)",
+        "matcher": "",
+        "_description": "Triggers when tasks complete",
         "hooks": [
           {
             "type": "command",
             "command": "$HOME/.code-notify/lib/code-notify/core/notifier.sh stop"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "_description": "Example: Triggers before Bash commands (disabled by default - too noisy)",
-        "_enabled": false,
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.code-notify/lib/code-notify/core/notifier.sh PreToolUse"
           }
         ]
       }

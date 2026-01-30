@@ -295,17 +295,6 @@ function Enable-Notifications {
                     )
                 }
             )
-            PreToolUse = @(
-                @{
-                    matcher = "Bash"
-                    hooks = @(
-                        @{
-                            type = "command"
-                            command = "powershell -ExecutionPolicy Bypass -File `"$notifyScript`" PreToolUse"
-                        }
-                    )
-                }
-            )
         }
     }
 
