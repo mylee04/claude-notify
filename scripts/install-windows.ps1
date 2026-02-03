@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Version
-$VERSION = "1.4.1"
+$VERSION = "1.4.2"
 
 # Colors and formatting
 function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
@@ -105,7 +105,7 @@ function Install-ClaudeNotify {
 # Code-Notify PowerShell Module
 # https://github.com/mylee04/code-notify
 
-$script:VERSION = "1.4.1"
+$script:VERSION = "1.4.2"
 $script:ClaudeHome = "$env:USERPROFILE\.claude"
 $script:SettingsFile = "$script:ClaudeHome\settings.json"
 $script:NotificationsDir = "$script:ClaudeHome\notifications"
@@ -714,22 +714,90 @@ switch ($HookType.ToLower()) {
     }
 }
 
+# Get the terminal process to activate on notification click
+function Get-TerminalProcess {
+    # Try to find the parent terminal process
+    $terminalApps = @("WindowsTerminal", "powershell", "pwsh", "cmd", "Code")
+
+    foreach ($app in $terminalApps) {
+        $proc = Get-Process -Name $app -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($proc) {
+            return $proc.MainWindowHandle
+        }
+    }
+    return $null
+}
+
+# Bring window to foreground
+function Set-WindowForeground {
+    param([IntPtr]$WindowHandle)
+
+    if ($WindowHandle -eq [IntPtr]::Zero) { return }
+
+    Add-Type @"
+    using System;
+    using System.Runtime.InteropServices;
+    public class WindowHelper {
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    }
+"@
+    [WindowHelper]::ShowWindow($WindowHandle, 9) | Out-Null  # SW_RESTORE
+    [WindowHelper]::SetForegroundWindow($WindowHandle) | Out-Null
+}
+
 # Send desktop notification
 function Send-DesktopNotification {
+    # Store terminal handle for activation
+    $terminalHandle = Get-TerminalProcess
+
     # Try BurntToast first
     if (Get-Module -ListAvailable -Name BurntToast) {
         Import-Module BurntToast -ErrorAction SilentlyContinue
-        New-BurntToastNotification -Text $Title, $Message -ErrorAction SilentlyContinue
+
+        # Create activation script block
+        $activateScript = {
+            $handle = $args[0]
+            if ($handle) {
+                Add-Type @"
+                using System;
+                using System.Runtime.InteropServices;
+                public class WinActivate {
+                    [DllImport("user32.dll")]
+                    public static extern bool SetForegroundWindow(IntPtr hWnd);
+                    [DllImport("user32.dll")]
+                    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+                }
+"@
+                [WinActivate]::ShowWindow([IntPtr]$handle, 9) | Out-Null
+                [WinActivate]::SetForegroundWindow([IntPtr]$handle) | Out-Null
+            }
+        }
+
+        $toastParams = @{
+            Text = $Title, $Message
+            ErrorAction = 'SilentlyContinue'
+        }
+
+        # Add activation if we have a terminal handle
+        if ($terminalHandle) {
+            $toastParams['ActivatedAction'] = $activateScript
+            $toastParams['ArgumentList'] = @($terminalHandle.ToInt64())
+        }
+
+        New-BurntToastNotification @toastParams
         return
     }
 
-    # Fallback to native Windows toast
+    # Fallback to native Windows toast with activation
     try {
         [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
         [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
 
         $template = @"
-<toast>
+<toast activationType="foreground" launch="code-notify:activate">
     <visual>
         <binding template="ToastText02">
             <text id="1">$Title</text>
@@ -742,10 +810,18 @@ function Send-DesktopNotification {
         $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
         $xml.LoadXml($template)
         $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+
+        # Register activation handler
+        if ($terminalHandle) {
+            $toast.add_Activated({
+                Set-WindowForeground -WindowHandle $terminalHandle
+            }.GetNewClosure())
+        }
+
         [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Code-Notify").Show($toast)
     }
     catch {
-        # Final fallback - balloon notification
+        # Final fallback - balloon notification (no click activation support)
         Add-Type -AssemblyName System.Windows.Forms
         $notification = New-Object System.Windows.Forms.NotifyIcon
         $notification.Icon = [System.Drawing.SystemIcons]::Information

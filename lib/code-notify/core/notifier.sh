@@ -161,8 +161,33 @@ if [[ -n "$PROJECT_NAME" ]] && [[ "$HOOK_TYPE" != "test" ]]; then
     SUBTITLE="$SUBTITLE - $PROJECT_NAME"
 fi
 
+# Get terminal bundle ID for macOS activation
+get_terminal_bundle_id() {
+    case "${TERM_PROGRAM:-}" in
+        "iTerm.app") echo "com.googlecode.iterm2" ;;
+        "Apple_Terminal") echo "com.apple.Terminal" ;;
+        "vscode") echo "com.microsoft.VSCode" ;;
+        "WezTerm") echo "com.github.wez.wezterm" ;;
+        "Alacritty") echo "org.alacritty" ;;
+        "Hyper") echo "co.zeit.hyper" ;;
+        *)
+            # Fallback: try to detect from parent process
+            if [[ -n "${ITERM_SESSION_ID:-}" ]]; then
+                echo "com.googlecode.iterm2"
+            elif [[ -n "${WEZTERM_PANE:-}" ]]; then
+                echo "com.github.wez.wezterm"
+            else
+                echo "com.apple.Terminal"
+            fi
+            ;;
+    esac
+}
+
 # Function to send notification on macOS
 send_macos_notification() {
+    local bundle_id
+    bundle_id=$(get_terminal_bundle_id)
+
     if command -v terminal-notifier &> /dev/null; then
         terminal-notifier \
             -title "$TITLE" \
@@ -170,8 +195,10 @@ send_macos_notification() {
             -message "$MESSAGE" \
             -sound "$SOUND" \
             -group "code-notify-$TOOL_NAME-$PROJECT_NAME" \
+            -activate "$bundle_id" \
             2>/dev/null
     else
+        # osascript doesn't support click-to-activate, but we can use a workaround
         osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\" subtitle \"$SUBTITLE\" sound name \"$SOUND\"" 2>/dev/null
     fi
 }
