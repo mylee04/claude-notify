@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Version
-$VERSION = "1.4.2"
+$VERSION = "1.4.3"
 
 # Colors and formatting
 function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
@@ -105,7 +105,7 @@ function Install-ClaudeNotify {
 # Code-Notify PowerShell Module
 # https://github.com/mylee04/code-notify
 
-$script:VERSION = "1.4.2"
+$script:VERSION = "1.4.3"
 $script:ClaudeHome = "$env:USERPROFILE\.claude"
 $script:SettingsFile = "$script:ClaudeHome\settings.json"
 $script:NotificationsDir = "$script:ClaudeHome\notifications"
@@ -757,9 +757,9 @@ function Send-DesktopNotification {
     if (Get-Module -ListAvailable -Name BurntToast) {
         Import-Module BurntToast -ErrorAction SilentlyContinue
 
-        # Create activation script block
+        # Create activation script block with closure to capture terminalHandle
+        $handle = $terminalHandle
         $activateScript = {
-            $handle = $args[0]
             if ($handle) {
                 Add-Type @"
                 using System;
@@ -774,7 +774,7 @@ function Send-DesktopNotification {
                 [WinActivate]::ShowWindow([IntPtr]$handle, 9) | Out-Null
                 [WinActivate]::SetForegroundWindow([IntPtr]$handle) | Out-Null
             }
-        }
+        }.GetNewClosure()
 
         $toastParams = @{
             Text = $Title, $Message
@@ -784,7 +784,8 @@ function Send-DesktopNotification {
         # Add activation if we have a terminal handle
         if ($terminalHandle) {
             $toastParams['ActivatedAction'] = $activateScript
-            $toastParams['ArgumentList'] = @($terminalHandle.ToInt64())
+            # Note: ArgumentList is not a valid parameter for New-BurntToastNotification
+            # This was causing errors and has been removed
         }
 
         New-BurntToastNotification @toastParams
