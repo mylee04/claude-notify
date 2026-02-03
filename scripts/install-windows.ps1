@@ -748,6 +748,19 @@ function Set-WindowForeground {
     [WindowHelper]::SetForegroundWindow($WindowHandle) | Out-Null
 }
 
+# Helper to activate window by handle
+function Activate-Window {
+    param([IntPtr]$hWnd)
+    if ($hWnd -eq [IntPtr]::Zero) { return }
+    $typeDef = @'
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+'@
+    Add-Type -Name WinAPI -Namespace Activation -MemberDefinition $typeDef -ErrorAction SilentlyContinue
+    [Activation.WinAPI]::ShowWindow($hWnd, 9) | Out-Null
+    [Activation.WinAPI]::SetForegroundWindow($hWnd) | Out-Null
+}
+
 # Send desktop notification
 function Send-DesktopNotification {
     # Store terminal handle for activation
@@ -757,24 +770,14 @@ function Send-DesktopNotification {
     if (Get-Module -ListAvailable -Name BurntToast) {
         Import-Module BurntToast -ErrorAction SilentlyContinue
 
-        # Create activation script block with closure to capture terminalHandle
-        $handle = $terminalHandle
+        # Create activation script - closure variables won't work with BurntToast
+        # Use a global variable approach instead
+        $global:ClaudeNotify_TerminalHandle = $terminalHandle
         $activateScript = {
-            if ($handle) {
-                Add-Type @"
-                using System;
-                using System.Runtime.InteropServices;
-                public class WinActivate {
-                    [DllImport("user32.dll")]
-                    public static extern bool SetForegroundWindow(IntPtr hWnd);
-                    [DllImport("user32.dll")]
-                    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-                }
-"@
-                [WinActivate]::ShowWindow([IntPtr]$handle, 9) | Out-Null
-                [WinActivate]::SetForegroundWindow([IntPtr]$handle) | Out-Null
+            if ($global:ClaudeNotify_TerminalHandle -and $global:ClaudeNotify_TerminalHandle -ne [IntPtr]::Zero) {
+                Activate-Window -hWnd $global:ClaudeNotify_TerminalHandle
             }
-        }.GetNewClosure()
+        }
 
         $toastParams = @{
             Text = $Title, $Message
@@ -784,8 +787,6 @@ function Send-DesktopNotification {
         # Add activation if we have a terminal handle
         if ($terminalHandle) {
             $toastParams['ActivatedAction'] = $activateScript
-            # Note: ArgumentList is not a valid parameter for New-BurntToastNotification
-            # This was causing errors and has been removed
         }
 
         New-BurntToastNotification @toastParams
