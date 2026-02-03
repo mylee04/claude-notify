@@ -11,7 +11,7 @@ Desktop notifications for AI coding tools - get alerts when tasks complete or in
   <img src="assets/multi-tools-support-02.png" width="48%" alt="All tools enabled"/>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.4.2-blue.svg)](https://github.com/mylee04/code-notify/releases)
+[![Version](https://img.shields.io/badge/version-1.4.3-blue.svg)](https://github.com/mylee04/code-notify/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-supported-green.svg)](https://www.apple.com/macos)
 [![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
@@ -33,6 +33,7 @@ Desktop notifications for AI coding tools - get alerts when tasks complete or in
 ### For Humans
 
 **macOS (Homebrew)**
+
 ```bash
 brew tap mylee04/tools
 brew install code-notify
@@ -40,11 +41,13 @@ cn on
 ```
 
 **Linux / WSL**
+
 ```bash
 curl -sSL https://raw.githubusercontent.com/mylee04/code-notify/main/scripts/install.sh | bash
 ```
 
 **Windows**
+
 ```powershell
 irm https://raw.githubusercontent.com/mylee04/code-notify/main/scripts/install-windows.ps1 | iex
 ```
@@ -59,6 +62,7 @@ https://raw.githubusercontent.com/mylee04/code-notify/main/docs/installation.md
 ```
 
 Or fetch directly:
+
 ```bash
 curl -s https://raw.githubusercontent.com/mylee04/code-notify/main/docs/installation.md
 ```
@@ -67,19 +71,19 @@ curl -s https://raw.githubusercontent.com/mylee04/code-notify/main/docs/installa
 
 ![cn help output](assets/cn-help.png)
 
-| Command | Description |
-|---------|-------------|
-| `cn on` | Enable notifications for all detected tools |
-| `cn on claude` | Enable for Claude Code only |
-| `cn on codex` | Enable for Codex only |
-| `cn on gemini` | Enable for Gemini CLI only |
-| `cn off` | Disable notifications |
-| `cn test` | Send test notification |
-| `cn status` | Show current status |
-| `cn alerts` | Configure which events trigger notifications |
-| `cn voice on` | Enable voice (macOS, Windows) |
-| `cn voice on claude` | Enable voice for Claude only |
-| `cnp on` | Enable for current project only |
+| Command              | Description                                  |
+| -------------------- | -------------------------------------------- |
+| `cn on`              | Enable notifications for all detected tools  |
+| `cn on claude`       | Enable for Claude Code only                  |
+| `cn on codex`        | Enable for Codex only                        |
+| `cn on gemini`       | Enable for Gemini CLI only                   |
+| `cn off`             | Disable notifications                        |
+| `cn test`            | Send test notification                       |
+| `cn status`          | Show current status                          |
+| `cn alerts`          | Configure which events trigger notifications |
+| `cn voice on`        | Enable voice (macOS, Windows)                |
+| `cn voice on claude` | Enable voice for Claude only                 |
+| `cnp on`             | Enable for current project only              |
 
 ## How It Works
 
@@ -94,8 +98,20 @@ When enabled, it adds hooks that call the notification script when tasks complet
 ```json
 {
   "hooks": {
-    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "notify.sh stop claude" }] }],
-    "Notification": [{ "matcher": "idle_prompt", "hooks": [{ "type": "command", "command": "notify.sh notification claude" }] }]
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [{ "type": "command", "command": "notify.sh stop claude" }]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          { "type": "command", "command": "notify.sh notification claude" }
+        ]
+      }
+    ]
   }
 }
 ```
@@ -113,21 +129,23 @@ cn alerts remove permission_prompt # Remove permission notifications
 cn alerts reset                    # Back to default (idle_prompt only)
 ```
 
-| Type | Description |
-|------|-------------|
-| `idle_prompt` | AI is waiting for your input (default) |
-| `permission_prompt` | AI needs tool permission (Y/n) |
-| `auth_success` | Authentication success |
-| `elicitation_dialog` | MCP tool input needed |
+| Type                 | Description                            |
+| -------------------- | -------------------------------------- |
+| `idle_prompt`        | AI is waiting for your input (default) |
+| `permission_prompt`  | AI needs tool permission (Y/n)         |
+| `auth_success`       | Authentication success                 |
+| `elicitation_dialog` | MCP tool input needed                  |
 
 ## Troubleshooting
 
 **Command not found?**
+
 ```bash
 exec $SHELL   # Reload shell
 ```
 
 **No notifications?**
+
 ```bash
 cn status     # Check if enabled
 cn test       # Test notification
