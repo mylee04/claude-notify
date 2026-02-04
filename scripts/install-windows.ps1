@@ -748,19 +748,6 @@ function Set-WindowForeground {
     [WindowHelper]::SetForegroundWindow($WindowHandle) | Out-Null
 }
 
-# Helper to activate window by handle
-function Activate-Window {
-    param([IntPtr]$hWnd)
-    if ($hWnd -eq [IntPtr]::Zero) { return }
-    $typeDef = @'
-[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-'@
-    Add-Type -Name WinAPI -Namespace Activation -MemberDefinition $typeDef -ErrorAction SilentlyContinue
-    [Activation.WinAPI]::ShowWindow($hWnd, 9) | Out-Null
-    [Activation.WinAPI]::SetForegroundWindow($hWnd) | Out-Null
-}
-
 # Send desktop notification
 function Send-DesktopNotification {
     # Store terminal handle for activation
@@ -775,7 +762,7 @@ function Send-DesktopNotification {
         $global:ClaudeNotify_TerminalHandle = $terminalHandle
         $activateScript = {
             if ($global:ClaudeNotify_TerminalHandle -and $global:ClaudeNotify_TerminalHandle -ne [IntPtr]::Zero) {
-                Activate-Window -hWnd $global:ClaudeNotify_TerminalHandle
+                Set-WindowForeground -WindowHandle $global:ClaudeNotify_TerminalHandle
             }
         }
 
