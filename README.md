@@ -11,11 +11,31 @@ Desktop notifications for AI coding tools - get alerts when tasks complete or in
   <img src="assets/multi-tools-support-02.png" width="48%" alt="All tools enabled"/>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.4.4-blue.svg)](https://github.com/mylee04/code-notify/releases)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-supported-green.svg)](https://www.apple.com/macos)
 [![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
 [![Windows](https://img.shields.io/badge/Windows-supported-green.svg)](https://www.microsoft.com/windows)
+
+---
+
+## What's New in v1.5.0
+
+**Sound Notifications** - Play custom sounds when tasks complete (separate from voice TTS)
+
+```bash
+cn sound on              # Enable with default system sound
+cn sound off             # Disable sounds
+cn sound set ~/ding.wav  # Use custom sound file
+cn sound test            # Play current sound
+cn sound list            # Show available system sounds
+```
+
+- Works on macOS (`afplay`), Linux (`paplay`/`aplay`), Windows (`SoundPlayer`)
+- Supports `.wav`, `.aiff`, `.mp3`, `.ogg` formats
+- Can be used together with voice notifications
+
+---
 
 ## Features
 
@@ -23,6 +43,7 @@ Desktop notifications for AI coding tools - get alerts when tasks complete or in
 - **Works everywhere** - Terminal, VSCode, Cursor, or any editor
 - **Cross-platform** - macOS, Linux, Windows
 - **Native notifications** - Uses system notification APIs
+- **Sound notifications** - Play custom sounds on task completion
 - **Voice announcements** - Hear when tasks complete (macOS, Windows)
 - **Tool-specific messages** - "Claude completed the task", "Codex completed the task"
 - **Project-specific settings** - Different configs per project
@@ -81,6 +102,8 @@ curl -s https://raw.githubusercontent.com/mylee04/code-notify/main/docs/installa
 | `cn test`            | Send test notification                       |
 | `cn status`          | Show current status                          |
 | `cn alerts`          | Configure which events trigger notifications |
+| `cn sound on`        | Enable sound notifications                   |
+| `cn sound set <path>`| Use custom sound file                        |
 | `cn voice on`        | Enable voice (macOS, Windows)                |
 | `cn voice on claude` | Enable voice for Claude only                 |
 | `cnp on`             | Enable for current project only              |

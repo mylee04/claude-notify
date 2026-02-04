@@ -5,6 +5,7 @@
 # Source utilities
 GLOBAL_CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$GLOBAL_CMD_DIR/../utils/voice.sh"
+source "$GLOBAL_CMD_DIR/../utils/sound.sh"
 source "$GLOBAL_CMD_DIR/../utils/help.sh"
 
 # Handle global commands
@@ -30,6 +31,9 @@ handle_global_command() {
             ;;
         "voice")
             handle_voice_command "$@"
+            ;;
+        "sound")
+            handle_sound_command "$@"
             ;;
         "alerts")
             handle_alerts_command "$@"
@@ -257,6 +261,21 @@ show_status() {
         echo "  ${SPEAKER} Voice: ${GREEN}ENABLED${RESET} ($current_voice)"
     else
         echo "  ${MUTE} Voice: ${DIM}DISABLED${RESET}"
+    fi
+
+    # Sound status
+    if is_sound_enabled; then
+        local sound_file
+        sound_file=$(get_sound)
+        local sound_name
+        sound_name=$(basename "$sound_file" 2>/dev/null || echo "default")
+        if [[ -f "$SOUND_CUSTOM_FILE" ]]; then
+            echo "  ${BELL} Sound: ${GREEN}ENABLED${RESET} (custom: $sound_name)"
+        else
+            echo "  ${BELL} Sound: ${GREEN}ENABLED${RESET} (default: $sound_name)"
+        fi
+    else
+        echo "  ${MUTE} Sound: ${DIM}DISABLED${RESET}"
     fi
 
     # Alert types
@@ -680,4 +699,113 @@ show_alerts_help() {
     echo "  cn alerts add permission_prompt  # Also notify on permission requests"
     echo "  cn alerts remove permission_prompt"
     echo "  cn alerts reset                  # Back to idle_prompt only"
+}
+
+# ============================================
+# Sound Notifications Management
+# ============================================
+
+# Handle sound commands
+# Usage: cn sound on, cn sound off, cn sound set <path>, cn sound test, etc.
+handle_sound_command() {
+    local subcommand="${1:-status}"
+    shift 2>/dev/null || true
+
+    case "$subcommand" in
+        "on")
+            header "${BELL} Enabling Sound Notifications"
+            echo ""
+            enable_sound
+            success "Sound notifications ENABLED"
+            echo ""
+            info "Using: $(get_sound)"
+            echo ""
+            test_sound
+            ;;
+        "off")
+            header "${MUTE} Disabling Sound Notifications"
+            echo ""
+            disable_sound
+            success "Sound notifications DISABLED"
+            ;;
+        "set")
+            local sound_path="$1"
+            if [[ -z "$sound_path" ]]; then
+                error "Please provide a path to a sound file"
+                echo ""
+                echo "Usage: cn sound set <path>"
+                echo "Example: cn sound set ~/sounds/notification.wav"
+                return 1
+            fi
+            header "${BELL} Setting Custom Sound"
+            echo ""
+            if set_custom_sound "$sound_path"; then
+                enable_sound
+                success "Custom sound set: $sound_path"
+                echo ""
+                test_sound
+            fi
+            ;;
+        "default")
+            header "${BELL} Resetting to Default Sound"
+            echo ""
+            reset_sound
+            local default_sound
+            default_sound=$(get_default_sound)
+            if [[ -n "$default_sound" ]]; then
+                success "Reset to default sound"
+                info "Using: $default_sound"
+            else
+                warning "No default sound available for this platform"
+            fi
+            ;;
+        "test")
+            header "${BELL} Testing Sound"
+            echo ""
+            if is_sound_enabled; then
+                test_sound
+                success "Sound played!"
+            else
+                warning "Sound is disabled"
+                info "Enable with: cn sound on"
+            fi
+            ;;
+        "list")
+            header "${BELL} Available System Sounds"
+            echo ""
+            list_system_sounds
+            ;;
+        "status"|*)
+            show_sound_status
+            ;;
+    esac
+}
+
+# Show detailed sound status
+show_sound_status() {
+    header "${BELL} Sound Status"
+    echo ""
+
+    if is_sound_enabled; then
+        local sound_file
+        sound_file=$(get_sound)
+        if [[ -f "$SOUND_CUSTOM_FILE" ]]; then
+            echo "  ${CHECK_MARK} Sound: ${GREEN}ENABLED${RESET} (custom)"
+            echo "     File: $sound_file"
+        else
+            echo "  ${CHECK_MARK} Sound: ${GREEN}ENABLED${RESET} (default)"
+            echo "     File: $sound_file"
+        fi
+    else
+        echo "  ${MUTE} Sound: ${DIM}DISABLED${RESET}"
+    fi
+
+    echo ""
+    info "Commands:"
+    echo "  ${CYAN}cn sound on${RESET}              Enable with default system sound"
+    echo "  ${CYAN}cn sound off${RESET}             Disable sound notifications"
+    echo "  ${CYAN}cn sound set <path>${RESET}      Use custom sound file"
+    echo "  ${CYAN}cn sound default${RESET}         Reset to system default"
+    echo "  ${CYAN}cn sound test${RESET}            Play current sound"
+    echo "  ${CYAN}cn sound list${RESET}            Show available system sounds"
 }

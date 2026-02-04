@@ -53,6 +53,15 @@ ${BOLD}VOICE COMMANDS:${RESET}
     ${GREEN}voice off${RESET} <tool>    Disable voice for specific tool
     ${GREEN}voice status${RESET}        Show voice settings
 
+${BOLD}SOUND COMMANDS:${RESET}
+    ${GREEN}sound on${RESET}            Enable with default system sound
+    ${GREEN}sound off${RESET}           Disable sound notifications
+    ${GREEN}sound set${RESET} <path>    Use custom sound file (.wav, .aiff, .mp3, .ogg)
+    ${GREEN}sound default${RESET}       Reset to system default
+    ${GREEN}sound test${RESET}          Play current sound
+    ${GREEN}sound list${RESET}          Show available system sounds
+    ${GREEN}sound status${RESET}        Show sound configuration
+
 ${BOLD}ALIASES:${RESET}
     ${CYAN}cn${RESET}  <command>   Main command
     ${CYAN}cnp${RESET} <command>   Shortcut for project commands
@@ -66,6 +75,8 @@ ${BOLD}EXAMPLES:${RESET}
     cn alerts               # Show alert type config
     cn alerts add permission_prompt  # Also notify on permission requests
     cn alerts reset         # Back to idle_prompt only (less noisy)
+    cn sound on             # Enable notification sounds
+    cn sound set ~/ding.wav # Use custom sound
     cnp on                  # Enable for current project
 
 ${BOLD}MORE INFO:${RESET}

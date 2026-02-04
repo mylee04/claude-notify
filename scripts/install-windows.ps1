@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Version
-$VERSION = "1.4.4"
+$VERSION = "1.5.0"
 
 # Colors and formatting
 function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
@@ -105,11 +105,14 @@ function Install-ClaudeNotify {
 # Code-Notify PowerShell Module
 # https://github.com/mylee04/code-notify
 
-$script:VERSION = "1.4.4"
+$script:VERSION = "1.5.0"
 $script:ClaudeHome = "$env:USERPROFILE\.claude"
 $script:SettingsFile = "$script:ClaudeHome\settings.json"
 $script:NotificationsDir = "$script:ClaudeHome\notifications"
 $script:VoiceFile = "$script:NotificationsDir\voice-enabled"
+$script:SoundEnabledFile = "$script:NotificationsDir\sound-enabled"
+$script:SoundCustomFile = "$script:NotificationsDir\sound-custom"
+$script:DefaultSoundFile = "C:\Windows\Media\chimes.wav"
 
 # Helper functions for colored output
 function Write-Success { param([string]$Message) Write-Host "[OK] $Message" -ForegroundColor Green }
@@ -224,6 +227,160 @@ function Send-VoiceNotification {
 
         $synth.SpeakAsync($Message) | Out-Null
     }
+}
+
+# Sound notification functions
+function Test-SoundEnabled {
+    return (Test-Path $script:SoundEnabledFile)
+}
+
+function Get-SoundFile {
+    if (Test-Path $script:SoundCustomFile) {
+        return Get-Content $script:SoundCustomFile -ErrorAction SilentlyContinue
+    }
+    return $script:DefaultSoundFile
+}
+
+function Send-SoundNotification {
+    if (-not (Test-SoundEnabled)) { return }
+
+    $soundFile = Get-SoundFile
+    if (-not (Test-Path $soundFile)) { return }
+
+    try {
+        $player = New-Object System.Media.SoundPlayer
+        $player.SoundLocation = $soundFile
+        $player.Play()
+    } catch {
+        # Silently fail if sound cannot be played
+    }
+}
+
+function Enable-Sound {
+    if (-not (Test-Path $script:NotificationsDir)) {
+        New-Item -ItemType Directory -Path $script:NotificationsDir -Force | Out-Null
+    }
+    New-Item -ItemType File -Path $script:SoundEnabledFile -Force | Out-Null
+    Write-Success "Sound notifications enabled"
+
+    $soundFile = Get-SoundFile
+    Write-Info "Using: $soundFile"
+
+    # Test the sound
+    Send-SoundNotification
+}
+
+function Disable-Sound {
+    if (Test-Path $script:SoundEnabledFile) {
+        Remove-Item $script:SoundEnabledFile -Force
+        Write-Success "Sound notifications disabled"
+    } else {
+        Write-Warning "Sound notifications were not enabled"
+    }
+}
+
+function Set-CustomSound {
+    param([string]$SoundPath)
+
+    if (-not $SoundPath) {
+        Write-Host "[X] Please provide a path to a sound file" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Usage: cn sound set <path>" -ForegroundColor Gray
+        Write-Host "Example: cn sound set C:\sounds\notification.wav" -ForegroundColor Gray
+        return
+    }
+
+    # Expand environment variables
+    $SoundPath = [Environment]::ExpandEnvironmentVariables($SoundPath)
+
+    if (-not (Test-Path $SoundPath)) {
+        Write-Host "[X] Sound file not found: $SoundPath" -ForegroundColor Red
+        return
+    }
+
+    # Validate extension
+    $ext = [System.IO.Path]::GetExtension($SoundPath).ToLower()
+    $validExtensions = @('.wav', '.aiff', '.mp3', '.wma')
+    if ($ext -notin $validExtensions) {
+        Write-Host "[X] Unsupported audio format: $ext" -ForegroundColor Red
+        Write-Host "Supported formats: .wav, .aiff, .mp3, .wma" -ForegroundColor Gray
+        return
+    }
+
+    if (-not (Test-Path $script:NotificationsDir)) {
+        New-Item -ItemType Directory -Path $script:NotificationsDir -Force | Out-Null
+    }
+
+    $SoundPath | Set-Content $script:SoundCustomFile -Encoding UTF8
+    New-Item -ItemType File -Path $script:SoundEnabledFile -Force | Out-Null
+
+    Write-Success "Custom sound set: $SoundPath"
+    Send-SoundNotification
+}
+
+function Reset-Sound {
+    if (Test-Path $script:SoundCustomFile) {
+        Remove-Item $script:SoundCustomFile -Force
+    }
+    Write-Success "Reset to default sound"
+    Write-Info "Using: $script:DefaultSoundFile"
+}
+
+function Test-Sound {
+    Write-Host "`n[*] Testing Sound" -ForegroundColor Cyan
+    Write-Host "================`n" -ForegroundColor Cyan
+
+    if (Test-SoundEnabled) {
+        $soundFile = Get-SoundFile
+        Write-Host "Playing: $soundFile" -ForegroundColor Gray
+        Send-SoundNotification
+        Write-Success "Sound played!"
+    } else {
+        Write-Warning "Sound is disabled"
+        Write-Info "Enable with: cn sound on"
+    }
+}
+
+function Get-SystemSounds {
+    Write-Host "`n[*] Available System Sounds" -ForegroundColor Cyan
+    Write-Host "===========================`n" -ForegroundColor Cyan
+
+    $mediaPath = "C:\Windows\Media"
+    if (Test-Path $mediaPath) {
+        Write-Host "Windows Media folder ($mediaPath):" -ForegroundColor White
+        Get-ChildItem -Path $mediaPath -Filter "*.wav" | ForEach-Object {
+            Write-Host "  - $($_.Name)" -ForegroundColor Gray
+        } | Select-Object -First 20
+        Write-Host "  ..." -ForegroundColor DarkGray
+    } else {
+        Write-Host "Cannot access Windows Media folder" -ForegroundColor Yellow
+    }
+}
+
+function Show-SoundStatus {
+    Write-Host "`n[*] Sound Status" -ForegroundColor Cyan
+    Write-Host "================`n" -ForegroundColor Cyan
+
+    if (Test-SoundEnabled) {
+        $soundFile = Get-SoundFile
+        if (Test-Path $script:SoundCustomFile) {
+            Write-Host "[*] Sound: ENABLED (custom)" -ForegroundColor Green
+        } else {
+            Write-Host "[*] Sound: ENABLED (default)" -ForegroundColor Green
+        }
+        Write-Host "    File: $soundFile" -ForegroundColor Gray
+    } else {
+        Write-Host "[-] Sound: DISABLED" -ForegroundColor DarkGray
+    }
+
+    Write-Host ""
+    Write-Host "Commands:" -ForegroundColor White
+    Write-Host "  cn sound on              Enable with default system sound" -ForegroundColor Gray
+    Write-Host "  cn sound off             Disable sound notifications" -ForegroundColor Gray
+    Write-Host "  cn sound set <path>      Use custom sound file" -ForegroundColor Gray
+    Write-Host "  cn sound default         Reset to system default" -ForegroundColor Gray
+    Write-Host "  cn sound test            Play current sound" -ForegroundColor Gray
+    Write-Host "  cn sound list            Show available system sounds" -ForegroundColor Gray
 }
 
 function Get-NotifyScript {
@@ -394,6 +551,19 @@ function Show-Status {
         Write-Host "[-] Voice notifications: DISABLED" -ForegroundColor DarkGray
     }
 
+    # Sound status
+    if (Test-SoundEnabled) {
+        $soundFile = Get-SoundFile
+        $soundName = Split-Path $soundFile -Leaf
+        if (Test-Path $script:SoundCustomFile) {
+            Write-Host "[*] Sound: ENABLED (custom: $soundName)" -ForegroundColor Green
+        } else {
+            Write-Host "[*] Sound: ENABLED (default: $soundName)" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "[-] Sound: DISABLED" -ForegroundColor DarkGray
+    }
+
     # BurntToast status
     Write-Host ""
     if (Get-Module -ListAvailable -Name BurntToast) {
@@ -500,6 +670,15 @@ COMMANDS:
     help            Show this help message
     version         Show version information
 
+SOUND COMMANDS:
+    sound on        Enable with default system sound
+    sound off       Disable sound notifications
+    sound set <path> Use custom sound file (.wav, .mp3, .wma)
+    sound default   Reset to system default
+    sound test      Play current sound
+    sound list      Show available system sounds
+    sound status    Show sound configuration
+
 PROJECT COMMANDS:
     project on      Enable for current project (or: cnp on)
     project off     Disable for current project (or: cnp off)
@@ -511,6 +690,8 @@ EXAMPLES:
     cn off                      # Disable notifications
     cnp on                      # Enable for current project
     cn test                     # Send test notification
+    cn sound on                 # Enable notification sounds
+    cn sound set C:\sounds\ding.wav  # Use custom sound
 
 MORE INFO:
     https://github.com/mylee04/code-notify
@@ -550,6 +731,18 @@ function Invoke-ClaudeNotify {
                 }
             }
         }
+        "sound" {
+            switch ($SubCommand) {
+                "on" { Enable-Sound }
+                "off" { Disable-Sound }
+                "set" { Set-CustomSound -SoundPath ($Args | Select-Object -First 1) }
+                "default" { Reset-Sound }
+                "test" { Test-Sound }
+                "list" { Get-SystemSounds }
+                "status" { Show-SoundStatus }
+                default { Show-SoundStatus }
+            }
+        }
         "project" {
             switch ($SubCommand) {
                 "on" { Enable-Notifications -Project }
@@ -574,11 +767,19 @@ Export-ModuleMember -Function @(
     'Invoke-ClaudeNotify',
     'Send-Notification',
     'Send-VoiceNotification',
+    'Send-SoundNotification',
     'Enable-Notifications',
     'Disable-Notifications',
     'Show-Status',
     'Enable-Voice',
     'Disable-Voice',
+    'Enable-Sound',
+    'Disable-Sound',
+    'Set-CustomSound',
+    'Reset-Sound',
+    'Test-Sound',
+    'Get-SystemSounds',
+    'Show-SoundStatus',
     'Send-TestNotification',
     'Show-Help'
 )
@@ -864,6 +1065,30 @@ function Send-VoiceNotificationLocal {
     }
 }
 
+# Send sound notification if enabled
+function Send-SoundNotificationLocal {
+    $SoundEnabledFile = "$ClaudeHome\notifications\sound-enabled"
+    $SoundCustomFile = "$ClaudeHome\notifications\sound-custom"
+    $DefaultSoundFile = "C:\Windows\Media\chimes.wav"
+
+    if (-not (Test-Path $SoundEnabledFile)) { return }
+
+    $soundFile = $DefaultSoundFile
+    if (Test-Path $SoundCustomFile) {
+        $soundFile = Get-Content $SoundCustomFile -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Test-Path $soundFile)) { return }
+
+    try {
+        $player = New-Object System.Media.SoundPlayer
+        $player.SoundLocation = $soundFile
+        $player.Play()
+    } catch {
+        # Silently fail if sound cannot be played
+    }
+}
+
 # Log notification
 function Write-NotificationLog {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -880,6 +1105,7 @@ function Write-NotificationLog {
 # Execute
 Send-DesktopNotification
 Send-VoiceNotificationLocal
+Send-SoundNotificationLocal
 Write-NotificationLog
 
 exit 0

@@ -18,6 +18,7 @@ fi
 NOTIFIER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$NOTIFIER_DIR/../utils/detect.sh"
 source "$NOTIFIER_DIR/../utils/voice.sh"
+source "$NOTIFIER_DIR/../utils/sound.sh"
 
 # Get display name for tool
 get_tool_display_name() {
@@ -276,6 +277,11 @@ get_voice_setting() {
     get_voice "global" 2>/dev/null || echo ""
 }
 
+# Check if sound should play
+should_play_sound() {
+    is_sound_enabled
+}
+
 # Send notification based on OS
 OS=$(detect_os)
 case "$OS" in
@@ -288,9 +294,24 @@ case "$OS" in
                 say -v "$VOICE" "$VOICE_MESSAGE"
             fi
         fi
+        # Sound notification if enabled (separate from voice)
+        if should_play_sound; then
+            play_sound
+        fi
         ;;
     linux)
         send_linux_notification
+        # Sound notification if enabled
+        if should_play_sound; then
+            play_sound
+        fi
+        ;;
+    wsl)
+        send_linux_notification
+        # Sound notification if enabled
+        if should_play_sound; then
+            play_sound
+        fi
         ;;
     windows)
         send_windows_notification

@@ -6,7 +6,7 @@
 set -e
 
 # Version
-VERSION="1.4.4"
+VERSION="1.5.0"
 
 # Determine the directory where the script is located (resolve symlinks)
 SCRIPT_PATH="${BASH_SOURCE[0]}"
@@ -48,7 +48,7 @@ case "$COMMAND_NAME" in
             "version"|"-v"|"--version")
                 show_version
                 ;;
-            "on"|"off"|"status"|"test"|"setup"|"voice"|"alerts")
+            "on"|"off"|"status"|"test"|"setup"|"voice"|"sound"|"alerts")
                 source "$LIB_DIR/commands/global.sh"
                 handle_global_command "$@"
                 ;;
@@ -69,7 +69,7 @@ case "$COMMAND_NAME" in
     "code-notify"|*)
         # Called as 'code-notify' - full command parsing
         case "${1:-help}" in
-            "on"|"off"|"status"|"test"|"setup"|"voice"|"alerts")
+            "on"|"off"|"status"|"test"|"setup"|"voice"|"sound"|"alerts")
                 source "$LIB_DIR/commands/global.sh"
                 handle_global_command "$@"
                 ;;
