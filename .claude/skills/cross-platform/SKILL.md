@@ -6,6 +6,7 @@ description: Cross-platform development patterns for macOS, Windows, and Linux
 # Cross-Platform Development
 
 ## When to Use
+
 - Adding new platform support
 - Writing platform-specific code
 - Testing across platforms
@@ -13,6 +14,7 @@ description: Cross-platform development patterns for macOS, Windows, and Linux
 ## Platform Detection
 
 ### Bash (macOS/Linux)
+
 ```bash
 detect_os() {
     case "$(uname -s)" in
@@ -32,6 +34,7 @@ detect_os() {
 ```
 
 ### PowerShell (Windows)
+
 ```powershell
 function Get-Platform {
     if ($IsWindows -or $env:OS -eq "Windows_NT") {
@@ -47,16 +50,17 @@ function Get-Platform {
 
 ## Notification Tools by Platform
 
-| Platform | Primary | Fallback |
-|----------|---------|----------|
-| macOS | terminal-notifier | osascript |
-| Linux | notify-send | zenity, wall |
-| Windows | BurntToast | System.Windows.Forms |
-| WSL | wsl-notify-send | notify-send |
+| Platform | Primary           | Fallback             |
+| -------- | ----------------- | -------------------- |
+| macOS    | terminal-notifier | osascript            |
+| Linux    | notify-send       | zenity, wall         |
+| Windows  | BurntToast        | System.Windows.Forms |
+| WSL      | wsl-notify-send   | notify-send          |
 
 ## Platform-Specific Patterns
 
 ### macOS
+
 ```bash
 send_macos_notification() {
     local title="$1"
@@ -74,6 +78,7 @@ send_macos_notification() {
 ```
 
 ### Linux
+
 ```bash
 send_linux_notification() {
     local title="$1"
@@ -92,6 +97,7 @@ send_linux_notification() {
 ```
 
 ### Windows (PowerShell)
+
 ```powershell
 function Send-WindowsNotification {
     param(
@@ -114,6 +120,7 @@ function Send-WindowsNotification {
 ```
 
 ### WSL
+
 ```bash
 send_wsl_notification() {
     local title="$1"
@@ -131,6 +138,7 @@ send_wsl_notification() {
 ## Path Handling
 
 ### Unix vs Windows Paths
+
 ```bash
 # Convert Unix path to Windows path (in WSL)
 to_windows_path() {
@@ -146,6 +154,7 @@ to_unix_path() {
 ```
 
 ### Home Directory
+
 ```bash
 # Bash
 HOME_DIR="$HOME"
@@ -157,6 +166,7 @@ $HomeDir = $env:USERPROFILE
 ## Git Handling Across Platforms
 
 ### Safe Git Commands
+
 ```bash
 # Works on all platforms
 get_project_name() {
@@ -173,6 +183,7 @@ get_project_name() {
 ```
 
 ### PowerShell Git Handling
+
 ```powershell
 function Get-ProjectName {
     try {
@@ -190,6 +201,7 @@ function Get-ProjectName {
 ## Testing Strategy
 
 ### CI/CD Matrix
+
 ```yaml
 strategy:
   matrix:
@@ -197,6 +209,7 @@ strategy:
 ```
 
 ### Platform-Specific Tests
+
 ```bash
 # test/test-platform.sh
 test_current_platform() {
@@ -225,6 +238,7 @@ test_current_platform() {
    - Always check with `command -v` before use
 
 ## Success Metrics
+
 - Works on macOS 10.14+
 - Works on Ubuntu 20.04+
 - Works on Windows 10+ (PowerShell 5.1+)

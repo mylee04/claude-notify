@@ -5,18 +5,21 @@ description: Create a well-formatted commit
 # Commit Changes
 
 ## What This Command Does
+
 1. Checks for uncommitted changes
 2. Runs tests to verify code works
 3. Generates appropriate commit message
 4. Creates the commit
 
 ## When to Use
+
 - After completing a feature or fix
 - When changes are ready to be saved
 
 ## Process
 
 ### 1. Pre-Commit Checks
+
 ```bash
 # Run tests
 make test
@@ -26,6 +29,7 @@ shellcheck bin/code-notify lib/code-notify/**/*.sh
 ```
 
 ### 2. Review Changes
+
 ```bash
 git status
 git diff --stat
@@ -41,14 +45,15 @@ type: brief description
 ```
 
 #### Types
-| Type | Use For |
-|------|---------|
-| feat | New feature |
-| fix | Bug fix |
-| docs | Documentation |
+
+| Type     | Use For          |
+| -------- | ---------------- |
+| feat     | New feature      |
+| fix      | Bug fix          |
+| docs     | Documentation    |
 | refactor | Code refactoring |
-| test | Adding tests |
-| chore | Maintenance |
+| test     | Adding tests     |
+| chore    | Maintenance      |
 
 ### 4. Example Messages
 
@@ -69,6 +74,7 @@ fix: handle non-git directories on Windows
 ```
 
 ## Rules
+
 - No Co-Authored-By lines
 - No .env files
 - Run tests before committing

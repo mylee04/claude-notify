@@ -3,23 +3,27 @@
 ## Mandatory Checks
 
 ### Variable Handling
+
 - [ ] All variables are quoted: `"$var"` not `$var`
 - [ ] Function variables use `local`
 - [ ] Constants are UPPER_CASE
 - [ ] Local variables are lower_case
 
 ### Conditionals
+
 - [ ] Use `[[ ]]` instead of `[ ]`
 - [ ] Use `command -v` to check for tools (not `which`)
 - [ ] Handle empty variables: `${var:-default}`
 
 ### Functions
+
 - [ ] All functions have descriptive names
 - [ ] Use `local` for all function variables
 - [ ] Return explicit exit codes
 - [ ] Document complex functions with comments
 
 ### Error Handling
+
 - [ ] Use `set -e` at script start
 - [ ] Check command exit codes
 - [ ] Provide helpful error messages to stderr
@@ -28,6 +32,7 @@
 ## Patterns
 
 ### Good
+
 ```bash
 #!/bin/bash
 set -e
@@ -50,6 +55,7 @@ send_notification() {
 ```
 
 ### Bad
+
 ```bash
 #!/bin/bash
 
@@ -71,6 +77,7 @@ send_notification() {
 ```
 
 ## Consequences
+
 - Unquoted variables cause word splitting bugs
 - Missing `local` pollutes global scope
 - `[ ]` has different behavior than `[[ ]]`

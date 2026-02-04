@@ -1,6 +1,7 @@
 # Git Workflow Rules
 
 ## Branch Strategy
+
 - `main` - Production-ready code
 - Feature branches for development
 
@@ -14,16 +15,18 @@ type: brief description
 ```
 
 ### Types
-| Type | Description |
-|------|-------------|
-| feat | New feature |
-| fix | Bug fix |
-| docs | Documentation only |
-| refactor | Code refactoring |
-| test | Adding/updating tests |
-| chore | Maintenance tasks |
+
+| Type     | Description           |
+| -------- | --------------------- |
+| feat     | New feature           |
+| fix      | Bug fix               |
+| docs     | Documentation only    |
+| refactor | Code refactoring      |
+| test     | Adding/updating tests |
+| chore    | Maintenance tasks     |
 
 ### Examples
+
 ```
 feat: add WSL notification support
 
@@ -40,6 +43,7 @@ fix: handle non-git directories on Windows
 ```
 
 ## Pre-Commit Checklist
+
 - [ ] `make test` passes
 - [ ] No shellcheck warnings
 - [ ] No hardcoded credentials
@@ -47,6 +51,7 @@ fix: handle non-git directories on Windows
 - [ ] No .env files staged
 
 ## Rules
+
 - Never force push to main
 - Never commit credentials
 - No Co-Authored-By lines
@@ -54,6 +59,7 @@ fix: handle non-git directories on Windows
 - Keep commits focused and atomic
 
 ## PR Process
+
 1. Create feature branch
 2. Make changes
 3. Run tests locally
@@ -62,6 +68,7 @@ fix: handle non-git directories on Windows
 6. Merge when approved
 
 ## Never Commit
+
 - `.env`
 - `*.pem`, `*.key`
 - `node_modules/`

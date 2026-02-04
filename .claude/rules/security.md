@@ -3,24 +3,28 @@
 ## Mandatory Checks
 
 ### Credentials
+
 - [ ] No hardcoded API keys, tokens, or passwords
 - [ ] No credentials in commit history
 - [ ] Use environment variables for sensitive data
 - [ ] Never log sensitive data
 
 ### Input Validation
+
 - [ ] Sanitize user input before use
 - [ ] No `eval` on untrusted input
 - [ ] Escape special characters in user input
 - [ ] Validate file paths
 
 ### Command Execution
+
 - [ ] No command injection vulnerabilities
 - [ ] Quote all variables in commands
 - [ ] Use arrays for command arguments
 - [ ] Avoid shell expansion on user input
 
 ### File Operations
+
 - [ ] Use absolute paths where possible
 - [ ] Check file existence before operations
 - [ ] Set appropriate file permissions
@@ -29,6 +33,7 @@
 ## Patterns
 
 ### Safe Command Execution
+
 ```bash
 # Good - quoted and validated
 run_command() {
@@ -51,6 +56,7 @@ run_command() {
 ```
 
 ### Safe File Handling
+
 ```bash
 # Good
 config_file="$HOME/.claude/settings.json"
@@ -63,6 +69,7 @@ config=$(cat $config_file)
 ```
 
 ### Environment Variables
+
 ```bash
 # Good - use env vars
 API_KEY="${CLAUDE_API_KEY:-}"
@@ -76,6 +83,7 @@ API_KEY="sk-1234567890"
 ```
 
 ## Never Commit
+
 - `.env` files
 - `*.pem`, `*.key` files
 - `credentials.json`
@@ -83,6 +91,7 @@ API_KEY="sk-1234567890"
 - API keys or tokens
 
 ## Consequences
+
 - Command injection can execute arbitrary code
 - Credential exposure leads to account compromise
 - Unsanitized input causes unexpected behavior

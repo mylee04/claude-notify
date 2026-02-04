@@ -6,6 +6,7 @@ description: Shell scripting best practices for cross-platform CLI tools
 # Shell Scripting Standards
 
 ## When to Use
+
 - Writing new shell scripts
 - Refactoring existing scripts
 - Adding new functions
@@ -13,6 +14,7 @@ description: Shell scripting best practices for cross-platform CLI tools
 ## Script Structure
 
 ### 1. File Header
+
 ```bash
 #!/bin/bash
 
@@ -23,6 +25,7 @@ set -e  # Exit on error
 ```
 
 ### 2. Constants (UPPER_CASE)
+
 ```bash
 VERSION="1.2.0"
 CONFIG_DIR="$HOME/.claude"
@@ -30,6 +33,7 @@ DEFAULT_SOUND="Glass"
 ```
 
 ### 3. Functions (snake_case)
+
 ```bash
 # Description of function
 # Arguments: $1 = name, $2 = optional value
@@ -42,6 +46,7 @@ function_name() {
 ```
 
 ### 4. Main Logic
+
 ```bash
 # Main execution
 main() {
@@ -56,6 +61,7 @@ main "$@"
 ## Best Practices
 
 ### Variable Handling
+
 ```bash
 # Good - quoted variables
 echo "$message"
@@ -67,6 +73,7 @@ path=$HOME/.config
 ```
 
 ### Conditionals
+
 ```bash
 # Good - double brackets
 if [[ -n "$var" ]]; then
@@ -80,6 +87,7 @@ fi
 ```
 
 ### Command Existence Check
+
 ```bash
 # Good
 if command -v terminal-notifier &> /dev/null; then
@@ -93,6 +101,7 @@ fi
 ```
 
 ### Error Handling
+
 ```bash
 # Good - explicit error handling
 if ! some_command; then
@@ -108,6 +117,7 @@ trap cleanup EXIT
 ```
 
 ### Local Variables in Functions
+
 ```bash
 # Good
 my_function() {
@@ -128,6 +138,7 @@ my_function() {
 ## Common Patterns
 
 ### OS Detection
+
 ```bash
 detect_os() {
     case "$(uname -s)" in
@@ -140,6 +151,7 @@ detect_os() {
 ```
 
 ### Safe File Operations
+
 ```bash
 # Create directory if not exists
 mkdir -p "$dir"
@@ -154,6 +166,7 @@ echo "$content" > "$file.tmp" && mv "$file.tmp" "$file"
 ```
 
 ### JSON Handling (without jq)
+
 ```bash
 # Simple grep-based check
 if grep -q '"enabled":\s*true' "$file"; then
@@ -169,6 +182,7 @@ fi
 ## Testing
 
 ### Test Function Output
+
 ```bash
 test_detect_os() {
     result=$(detect_os)
@@ -181,6 +195,7 @@ test_detect_os() {
 ```
 
 ### Test Exit Codes
+
 ```bash
 test_error_handling() {
     if invalid_command 2>/dev/null; then
@@ -192,6 +207,7 @@ test_error_handling() {
 ```
 
 ## Success Metrics
+
 - shellcheck passes with no warnings
 - All functions use local variables
 - All variables are quoted
