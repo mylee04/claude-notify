@@ -123,6 +123,7 @@ else
     curl -fsSL "$GITHUB_RAW/lib/code-notify/utils/detect.sh" -o "$INSTALL_DIR/lib/code-notify/utils/detect.sh"
     curl -fsSL "$GITHUB_RAW/lib/code-notify/utils/help.sh" -o "$INSTALL_DIR/lib/code-notify/utils/help.sh"
     curl -fsSL "$GITHUB_RAW/lib/code-notify/utils/voice.sh" -o "$INSTALL_DIR/lib/code-notify/utils/voice.sh"
+    curl -fsSL "$GITHUB_RAW/lib/code-notify/utils/sound.sh" -o "$INSTALL_DIR/lib/code-notify/utils/sound.sh"
 fi
 
 # Update paths in the main script
