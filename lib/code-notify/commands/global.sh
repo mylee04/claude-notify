@@ -127,7 +127,10 @@ enable_single_tool() {
         info "Enabling $tool notifications..."
     fi
 
-    enable_tool "$tool"
+    if ! enable_tool "$tool"; then
+        error "Failed to enable $tool notifications"
+        return 1
+    fi
 
     local config_file
     case "$tool" in
@@ -197,7 +200,10 @@ disable_single_tool() {
         info "Disabling $tool notifications..."
     fi
 
-    disable_tool "$tool"
+    if ! disable_tool "$tool"; then
+        error "Failed to disable $tool notifications"
+        return 1
+    fi
 
     success "$tool: DISABLED"
     return 0
