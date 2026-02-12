@@ -235,13 +235,16 @@ enable_hooks_in_settings() {
     local notify_script=$(get_notify_script)
     local notify_matcher=$(get_notify_matcher)
 
+    # Ensure .claude directory exists
+    mkdir -p "$(dirname "$GLOBAL_SETTINGS_FILE")"
+
     # Read existing settings or create new
     local settings="{}"
     if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
         settings=$(cat "$GLOBAL_SETTINGS_FILE")
     fi
 
-    # Add hooks using jq if available
+    # Add hooks using jq (preferred) or python (fallback)
     if has_jq; then
         settings=$(echo "$settings" | jq --arg script "$notify_script" --arg matcher "$notify_matcher" '.hooks = {
             "Notification": [{
@@ -260,11 +263,35 @@ enable_hooks_in_settings() {
             }]
         }')
         echo "$settings" > "$GLOBAL_SETTINGS_FILE"
+    elif command -v python3 &> /dev/null; then
+        # Use Python as fallback (available on most systems)
+        python3 - "$notify_script" "$notify_matcher" << 'PYTHON' "$settings" > "$GLOBAL_SETTINGS_FILE"
+import sys
+import json
+
+script = sys.argv[1]
+matcher = sys.argv[2]
+settings = json.load(sys.stdin)
+
+settings["hooks"] = {
+    "Notification": [{
+        "matcher": matcher,
+        "hooks": [{"type": "command", "command": f"{script} notification claude"}]
+    }],
+    "Stop": [{
+        "matcher": "",
+        "hooks": [{"type": "command", "command": f"{script} stop claude"}]
+    }]
+}
+
+print(json.dumps(settings, indent=2))
+PYTHON
     else
-        # Manual JSON construction without jq
+        # No jq or python - warn user and create minimal config
+        echo "Warning: jq or python3 required for proper config preservation" >&2
+        echo "Installing jq is recommended: brew install jq" >&2
         cat > "$GLOBAL_SETTINGS_FILE" << EOF
 {
-  "model": "opus",
   "hooks": {
     "Notification": [
       {
@@ -299,18 +326,43 @@ disable_hooks_in_settings() {
     if [[ ! -f "$GLOBAL_SETTINGS_FILE" ]]; then
         return 0
     fi
-    
-    # Remove hooks using jq if available
+
+    # Remove hooks using jq (preferred) or python (fallback)
     if has_jq; then
         local settings=$(cat "$GLOBAL_SETTINGS_FILE")
-        echo "$settings" | jq 'del(.hooks)' > "$GLOBAL_SETTINGS_FILE"
-    else
-        # Manual removal - just keep model setting
-        if grep -q '"model"' "$GLOBAL_SETTINGS_FILE"; then
-            echo '{"model": "opus"}' > "$GLOBAL_SETTINGS_FILE"
+        local new_settings=$(echo "$settings" | jq 'del(.hooks)')
+        # Only write if there's actual content left (not just {})
+        if [[ "$new_settings" != "{}" ]]; then
+            echo "$new_settings" > "$GLOBAL_SETTINGS_FILE"
         else
-            echo '{}' > "$GLOBAL_SETTINGS_FILE"
+            # File would be empty, just remove it
+            rm -f "$GLOBAL_SETTINGS_FILE"
         fi
+    elif command -v python3 &> /dev/null; then
+        python3 << 'PYTHON' "$GLOBAL_SETTINGS_FILE"
+import sys
+import json
+import os
+
+file_path = sys.argv[1]
+with open(file_path, 'r') as f:
+    settings = json.load(f)
+
+if 'hooks' in settings:
+    del settings['hooks']
+
+if settings:
+    with open(file_path, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write('\n')
+else:
+    os.remove(file_path)
+PYTHON
+    else
+        # No jq or python - warn and keep file as-is (safer than corrupting it)
+        echo "Warning: jq or python3 required to safely disable hooks" >&2
+        echo "Your settings file was not modified. Install jq: brew install jq" >&2
+        return 1
     fi
 }
 
@@ -530,10 +582,44 @@ disable_gemini_hooks() {
 
     if has_jq; then
         local settings=$(cat "$GEMINI_SETTINGS_FILE")
-        echo "$settings" | jq 'del(.hooks.Notification) | del(.hooks.AfterAgent)' > "$GEMINI_SETTINGS_FILE"
+        # Remove code-notify specific hooks but preserve other settings
+        local new_settings=$(echo "$settings" | jq 'del(.hooks.Notification) | del(.hooks.AfterAgent) | del(.hooks.enabled)')
+        # If hooks object is now empty, remove it entirely
+        new_settings=$(echo "$new_settings" | jq 'if .hooks == {} then del(.hooks) else . end')
+        if [[ "$new_settings" != "{}" ]]; then
+            echo "$new_settings" > "$GEMINI_SETTINGS_FILE"
+        else
+            rm -f "$GEMINI_SETTINGS_FILE"
+        fi
+    elif command -v python3 &> /dev/null; then
+        python3 << 'PYTHON' "$GEMINI_SETTINGS_FILE"
+import sys
+import json
+import os
+
+file_path = sys.argv[1]
+with open(file_path, 'r') as f:
+    settings = json.load(f)
+
+if 'hooks' in settings:
+    settings['hooks'].pop('Notification', None)
+    settings['hooks'].pop('AfterAgent', None)
+    settings['hooks'].pop('enabled', None)
+    if not settings['hooks']:
+        del settings['hooks']
+
+if settings:
+    with open(file_path, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write('\n')
+else:
+    os.remove(file_path)
+PYTHON
     else
-        # Without jq, just remove the hooks section entirely
-        echo '{"tools": {"enableHooks": false}}' > "$GEMINI_SETTINGS_FILE"
+        # No jq or python - warn and keep file as-is (safer than corrupting it)
+        echo "Warning: jq or python3 required to safely disable hooks" >&2
+        echo "Your settings file was not modified. Install jq: brew install jq" >&2
+        return 1
     fi
 }
 
