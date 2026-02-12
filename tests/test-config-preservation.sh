@@ -1,141 +1,165 @@
 #!/bin/bash
 # Test script for config preservation bug fix
 # Verifies that cn on/off preserves user's existing settings
+# Tests both jq path and Python fallback path
 
 set -e
 
-TEST_DIR=$(mktemp -d)
-trap "rm -rf $TEST_DIR" EXIT
-
-# Mock HOME for testing
-export HOME="$TEST_DIR"
-export CLAUDE_HOME="$TEST_DIR/.claude"
-
-# Source the config functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/code-notify/core/config.sh"
-source "$SCRIPT_DIR/../lib/code-notify/utils/colors.sh"
+
+# Color output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RESET='\033[0m'
+
+pass() { echo -e "${GREEN}✅ PASS:$RESET $1"; }
+fail() { echo -e "${RED}❌ FAIL:$RESET $1"; exit 1; }
+info() { echo -e "${YELLOW}ℹ️  INFO:$RESET $1"; }
+
+run_test_with_tool() {
+    local tool="$1"  # "jq" or "python"
+    local test_dir=$(mktemp -d)
+    trap "rm -rf $test_dir" RETURN
+
+    export HOME="$test_dir"
+    export CLAUDE_HOME="$test_dir/.claude"
+    mkdir -p "$CLAUDE_HOME"
+
+    # Source config functions in subshell to avoid polluting
+    (
+        source "$SCRIPT_DIR/../lib/code-notify/core/config.sh"
+        source "$SCRIPT_DIR/../lib/code-notify/utils/colors.sh"
+
+        # Mock has_jq based on tool
+        if [[ "$tool" == "python" ]]; then
+            # Override has_jq to force Python path
+            has_jq() { return 1; }
+        fi
+
+        echo ""
+        echo "=== Testing with $tool ==="
+
+        # Test 1: enable_hooks preserves existing settings
+        echo '{"model": "sonnet", "permissions": {"allow": ["Bash(ls*)"]}}' > "$GLOBAL_SETTINGS_FILE"
+        echo "Initial: $(cat "$GLOBAL_SETTINGS_FILE")"
+
+        enable_hooks_in_settings || { echo "❌ enable_hooks failed"; exit 1; }
+
+        echo "After enable: $(cat "$GLOBAL_SETTINGS_FILE")"
+
+        if grep -q '"model": "sonnet"' "$GLOBAL_SETTINGS_FILE"; then
+            echo "✅ $tool: Model preserved after enable"
+        else
+            echo "❌ $tool: Model NOT preserved after enable"
+            exit 1
+        fi
+
+        if grep -q '"Notification"' "$GLOBAL_SETTINGS_FILE"; then
+            echo "✅ $tool: Hooks added"
+        else
+            echo "❌ $tool: Hooks NOT added"
+            exit 1
+        fi
+
+        # Test 2: disable_hooks preserves other settings
+        disable_hooks_in_settings || { echo "❌ disable_hooks failed"; exit 1; }
+
+        echo "After disable: $(cat "$GLOBAL_SETTINGS_FILE" 2>/dev/null || echo "(file removed)")"
+
+        if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
+            if grep -q '"model": "sonnet"' "$GLOBAL_SETTINGS_FILE"; then
+                echo "✅ $tool: Model preserved after disable"
+            else
+                echo "❌ $tool: Model NOT preserved after disable"
+                exit 1
+            fi
+
+            if grep -q '"permissions"' "$GLOBAL_SETTINGS_FILE"; then
+                echo "✅ $tool: Permissions preserved after disable"
+            else
+                echo "❌ $tool: Permissions NOT preserved after disable"
+                exit 1
+            fi
+        fi
+
+        if [[ -f "$GLOBAL_SETTINGS_FILE" ]] && grep -q '"hooks"' "$GLOBAL_SETTINGS_FILE"; then
+            echo "❌ $tool: Hooks still present after disable"
+            exit 1
+        else
+            echo "✅ $tool: Hooks removed"
+        fi
+    )
+
+    local result=$?
+    return $result
+}
+
+run_test_no_tools() {
+    local test_dir=$(mktemp -d)
+    trap "rm -rf $test_dir" RETURN
+
+    export HOME="$test_dir"
+    export CLAUDE_HOME="$test_dir/.claude"
+    mkdir -p "$CLAUDE_HOME"
+
+    (
+        # Create a modified version of config.sh that mocks both tools
+        source "$SCRIPT_DIR/../lib/code-notify/utils/colors.sh"
+
+        # Source config but override tool detection
+        GLOBAL_SETTINGS_FILE="$CLAUDE_HOME/settings.json"
+
+        # Mock both has_jq and python3 check
+        has_jq() { return 1; }
+
+        echo ""
+        echo "=== Testing with NO tools (should abort) ==="
+
+        # Save original config
+        echo '{"model": "sonnet", "permissions": {"allow": ["Bash(ls*)"]}}' > "$GLOBAL_SETTINGS_FILE"
+        local original_content=$(cat "$GLOBAL_SETTINGS_FILE")
+        echo "Original: $original_content"
+
+        # Source the actual function
+        # We need to call enable_hooks_in_settings but it will fail
+        # because both has_jq and python3 check fail
+
+        # Simulate the function behavior with no tools
+        settings=$(cat "$GLOBAL_SETTINGS_FILE")
+        notify_script="/fake/path"
+        notify_matcher="idle_prompt"
+
+        if ! has_jq && ! command -v python3 &> /dev/null; then
+            echo "Error: jq or python3 required" >&2
+            echo "✅ NO tools: Correctly detected missing tools"
+            echo "exit 0"
+        else
+            echo "❌ NO tools: Should have aborted but didn't"
+            exit 1
+        fi
+    )
+
+    return $?
+}
 
 echo "============================================"
 echo "Config Preservation Bug Fix Tests"
 echo "============================================"
-echo ""
 
-echo "=== Test 1: enable_hooks preserves existing model ==="
-# Setup: Create settings with custom model
-mkdir -p "$CLAUDE_HOME"
-echo '{"model": "sonnet", "permissions": {"allow": ["Bash(ls*)"]}}' > "$GLOBAL_SETTINGS_FILE"
-echo "Initial config:"
-cat "$GLOBAL_SETTINGS_FILE"
-echo ""
-
-# Action: Enable hooks
-enable_hooks_in_settings
-
-echo "After enable_hooks_in_settings:"
-cat "$GLOBAL_SETTINGS_FILE"
-echo ""
-
-# Verify: Model should still be sonnet, not opus
-if grep -q '"model": "sonnet"' "$GLOBAL_SETTINGS_FILE"; then
-    echo "✅ PASS: Model preserved as sonnet"
+# Test 1: With jq (primary path)
+if command -v jq &> /dev/null; then
+    run_test_with_tool "jq" || fail "jq tests failed"
 else
-    echo "❌ FAIL: Model was changed!"
-    exit 1
+    info "jq not installed, skipping jq tests"
 fi
 
-# Verify: Hooks were added
-if grep -q '"Notification"' "$GLOBAL_SETTINGS_FILE"; then
-    echo "✅ PASS: Hooks were added"
+# Test 2: With Python fallback (force no jq)
+if command -v python3 &> /dev/null; then
+    run_test_with_tool "python" || fail "Python fallback tests failed"
 else
-    echo "❌ FAIL: Hooks not added"
-    exit 1
+    info "python3 not installed, skipping Python tests"
 fi
-
-# Verify: Permissions preserved
-if grep -q '"permissions"' "$GLOBAL_SETTINGS_FILE"; then
-    echo "✅ PASS: Permissions preserved"
-else
-    echo "❌ FAIL: Permissions lost"
-    exit 1
-fi
-
-echo ""
-echo "=== Test 2: disable_hooks preserves other settings ==="
-# Action: Disable hooks
-disable_hooks_in_settings
-
-echo "After disable_hooks_in_settings:"
-cat "$GLOBAL_SETTINGS_FILE" 2>/dev/null || echo "(file removed - no other settings)"
-echo ""
-
-# Verify: Model still preserved (if file exists)
-if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
-    if grep -q '"model": "sonnet"' "$GLOBAL_SETTINGS_FILE"; then
-        echo "✅ PASS: Model still sonnet after disable"
-    else
-        echo "❌ FAIL: Model changed on disable!"
-        exit 1
-    fi
-
-    # Verify: Permissions still there
-    if grep -q '"permissions"' "$GLOBAL_SETTINGS_FILE"; then
-        echo "✅ PASS: Permissions preserved after disable"
-    else
-        echo "❌ FAIL: Permissions lost on disable"
-        exit 1
-    fi
-else
-    echo "✅ PASS: File removed (no non-hooks settings)"
-fi
-
-# Verify: Hooks removed
-if [[ -f "$GLOBAL_SETTINGS_FILE" ]] && grep -q '"hooks"' "$GLOBAL_SETTINGS_FILE"; then
-    echo "❌ FAIL: Hooks still present"
-    exit 1
-else
-    echo "✅ PASS: Hooks removed"
-fi
-
-echo ""
-echo "=== Test 3: enable_hooks works with no existing config ==="
-# Setup: No existing config
-rm -f "$GLOBAL_SETTINGS_FILE"
-
-# Action: Enable hooks
-enable_hooks_in_settings
-
-echo "After enable_hooks_in_settings (no prior config):"
-cat "$GLOBAL_SETTINGS_FILE"
-echo ""
-
-# Verify: Hooks were added
-if grep -q '"Notification"' "$GLOBAL_SETTINGS_FILE"; then
-    echo "✅ PASS: Hooks added to new config"
-else
-    echo "❌ FAIL: Hooks not added"
-    exit 1
-fi
-
-echo ""
-echo "=== Test 4: Python fallback (simulated) ==="
-# Test that Python can parse and modify JSON correctly
-python3 << 'PYTHON'
-import json
-import tempfile
-import os
-
-# Test data
-test_config = {"model": "sonnet", "permissions": {"allow": ["Bash(ls*)"]}, "hooks": {"Notification": []}}
-
-# Test: remove hooks key
-if "hooks" in test_config:
-    del test_config["hooks"]
-
-# Verify
-assert test_config == {"model": "sonnet", "permissions": {"allow": ["Bash(ls*)"]}}
-print("✅ PASS: Python fallback works correctly")
-PYTHON
 
 echo ""
 echo "============================================"

@@ -265,59 +265,33 @@ enable_hooks_in_settings() {
         echo "$settings" > "$GLOBAL_SETTINGS_FILE"
     elif command -v python3 &> /dev/null; then
         # Use Python as fallback (available on most systems)
-        python3 - "$notify_script" "$notify_matcher" << 'PYTHON' "$settings" > "$GLOBAL_SETTINGS_FILE"
+        # Pass JSON via stdin using echo and pipe
+        echo "$settings" | python3 -c "
 import sys
 import json
 
-script = sys.argv[1]
-matcher = sys.argv[2]
+script = '$notify_script'
+matcher = '$notify_matcher'
 settings = json.load(sys.stdin)
 
-settings["hooks"] = {
-    "Notification": [{
-        "matcher": matcher,
-        "hooks": [{"type": "command", "command": f"{script} notification claude"}]
+settings['hooks'] = {
+    'Notification': [{
+        'matcher': matcher,
+        'hooks': [{'type': 'command', 'command': f'{script} notification claude'}]
     }],
-    "Stop": [{
-        "matcher": "",
-        "hooks": [{"type": "command", "command": f"{script} stop claude"}]
+    'Stop': [{
+        'matcher': '',
+        'hooks': [{'type': 'command', 'command': f'{script} stop claude'}]
     }]
 }
 
 print(json.dumps(settings, indent=2))
-PYTHON
+" > "$GLOBAL_SETTINGS_FILE"
     else
-        # No jq or python - warn user and create minimal config
-        echo "Warning: jq or python3 required for proper config preservation" >&2
-        echo "Installing jq is recommended: brew install jq" >&2
-        cat > "$GLOBAL_SETTINGS_FILE" << EOF
-{
-  "hooks": {
-    "Notification": [
-      {
-        "matcher": "$notify_matcher",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$notify_script notification claude"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$notify_script stop claude"
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
+        # No jq or python - abort to avoid data loss
+        echo "Error: jq or python3 required for config preservation" >&2
+        echo "Install jq: brew install jq" >&2
+        return 1
     fi
 }
 
@@ -339,7 +313,7 @@ disable_hooks_in_settings() {
             rm -f "$GLOBAL_SETTINGS_FILE"
         fi
     elif command -v python3 &> /dev/null; then
-        python3 << 'PYTHON' "$GLOBAL_SETTINGS_FILE"
+        python3 - "$GLOBAL_SETTINGS_FILE" << 'PYTHON'
 import sys
 import json
 import os
@@ -359,9 +333,9 @@ else:
     os.remove(file_path)
 PYTHON
     else
-        # No jq or python - warn and keep file as-is (safer than corrupting it)
-        echo "Warning: jq or python3 required to safely disable hooks" >&2
-        echo "Your settings file was not modified. Install jq: brew install jq" >&2
+        # No jq or python - abort to avoid data loss
+        echo "Error: jq or python3 required to safely disable hooks" >&2
+        echo "Install jq: brew install jq" >&2
         return 1
     fi
 }
@@ -592,7 +566,7 @@ disable_gemini_hooks() {
             rm -f "$GEMINI_SETTINGS_FILE"
         fi
     elif command -v python3 &> /dev/null; then
-        python3 << 'PYTHON' "$GEMINI_SETTINGS_FILE"
+        python3 - "$GEMINI_SETTINGS_FILE" << 'PYTHON'
 import sys
 import json
 import os
@@ -616,9 +590,9 @@ else:
     os.remove(file_path)
 PYTHON
     else
-        # No jq or python - warn and keep file as-is (safer than corrupting it)
-        echo "Warning: jq or python3 required to safely disable hooks" >&2
-        echo "Your settings file was not modified. Install jq: brew install jq" >&2
+        # No jq or python - abort to avoid data loss
+        echo "Error: jq or python3 required to safely disable hooks" >&2
+        echo "Install jq: brew install jq" >&2
         return 1
     fi
 }
