@@ -45,6 +45,70 @@ has_jq() {
     command -v jq &> /dev/null
 }
 
+# Check if python3 is available
+has_python3() {
+    command -v python3 &> /dev/null
+}
+
+# Shell quote helper - safely escape strings for shell commands
+# Usage: shell_quote "string with spaces; and special chars"
+# Returns: properly quoted string safe for shell execution
+shell_quote() {
+    local str="$1"
+    printf '%q' "$str"
+}
+
+# Atomic file write helper - prevents data loss on crash
+atomic_write() {
+    local target="$1"
+    local content="$2"
+    local dir_path
+    local tmp_file
+
+    dir_path=$(dirname "$target")
+    tmp_file=$(mktemp "${dir_path}/.tmp.XXXXXX") || return 1
+
+    if printf '%s\n' "$content" > "$tmp_file"; then
+        mv "$tmp_file" "$target"
+        return 0
+    else
+        rm -f "$tmp_file"
+        return 1
+    fi
+}
+
+# Safe jq update helper - applies jq filter and only writes on success
+# Usage: safe_jq_update <file> <jq_filter> [--arg name value]...
+# Returns 0 on success, 1 on failure (original file unchanged)
+safe_jq_update() {
+    local file="$1"
+    local jq_filter="$2"
+    shift 2
+
+    # Read existing content
+    local content="{}"
+    if [[ -f "$file" ]]; then
+        content=$(cat "$file")
+    fi
+
+    # Apply jq filter
+    local new_content
+    if ! new_content=$(echo "$content" | jq "$@" "$jq_filter" 2>/dev/null); then
+        echo "Error: Failed to parse or update configuration JSON" >&2
+        echo "File unchanged: $file" >&2
+        return 1
+    fi
+
+    # Validate result is not empty
+    if [[ -z "$new_content" ]]; then
+        echo "Error: jq produced empty output, file unchanged" >&2
+        return 1
+    fi
+
+    # Atomic write
+    atomic_write "$file" "$new_content"
+}
+
 # Validate JSON file format
 validate_json() {
     local file="$1"
@@ -157,9 +221,19 @@ EOF
 backup_config() {
     local file="$1"
     if [[ -f "$file" ]]; then
+        # Ensure backup directory exists
+        if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+            echo "Warning: Failed to create backup directory: $BACKUP_DIR" >&2
+            return 1
+        fi
+
         local backup_name="$(basename "$file").$(date +%Y%m%d_%H%M%S)"
-        cp "$file" "$BACKUP_DIR/$backup_name"
-        return 0
+        if cp "$file" "$BACKUP_DIR/$backup_name" 2>/dev/null; then
+            return 0
+        else
+            echo "Warning: Failed to create backup of $file" >&2
+            return 1
+        fi
     fi
     return 1
 }
@@ -235,15 +309,12 @@ enable_hooks_in_settings() {
     local notify_script=$(get_notify_script)
     local notify_matcher=$(get_notify_matcher)
 
-    # Read existing settings or create new
-    local settings="{}"
-    if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
-        settings=$(cat "$GLOBAL_SETTINGS_FILE")
-    fi
+    # Ensure .claude directory exists
+    mkdir -p "$(dirname "$GLOBAL_SETTINGS_FILE")"
 
-    # Add hooks using jq if available
+    # Add hooks using jq (preferred) or python (fallback)
     if has_jq; then
-        settings=$(echo "$settings" | jq --arg script "$notify_script" --arg matcher "$notify_matcher" '.hooks = {
+        safe_jq_update "$GLOBAL_SETTINGS_FILE" '.hooks = {
             "Notification": [{
                 "matcher": $matcher,
                 "hooks": [{
@@ -258,39 +329,71 @@ enable_hooks_in_settings() {
                     "command": ($script + " stop claude")
                 }]
             }]
-        }')
-        echo "$settings" > "$GLOBAL_SETTINGS_FILE"
-    else
-        # Manual JSON construction without jq
-        cat > "$GLOBAL_SETTINGS_FILE" << EOF
-{
-  "model": "opus",
-  "hooks": {
-    "Notification": [
-      {
-        "matcher": "$notify_matcher",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$notify_script notification claude"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$notify_script stop claude"
-          }
-        ]
-      }
-    ]
-  }
+        }' --arg script "$notify_script" --arg matcher "$notify_matcher"
+    elif has_python3; then
+        # Use Python as fallback - pass JSON via temp file to avoid shell escaping issues
+        local settings="{}"
+        if [[ -f "$GLOBAL_SETTINGS_FILE" ]]; then
+            settings=$(cat "$GLOBAL_SETTINGS_FILE")
+        fi
+
+        local tmp_json
+        tmp_json=$(mktemp) || { echo "Error: Failed to create temp file" >&2; return 1; }
+
+        # Write settings to temp file, then have Python read and clean it up
+        printf '%s\n' "$settings" > "$tmp_json"
+
+        python3 - "$GLOBAL_SETTINGS_FILE" "$notify_script" "$notify_matcher" "$tmp_json" << 'PYTHON'
+import sys
+import json
+import tempfile
+import os
+
+file_path = sys.argv[1]
+script = sys.argv[2]
+matcher = sys.argv[3]
+json_file = sys.argv[4]
+
+try:
+    with open(json_file, 'r') as f:
+        settings = json.load(f)
+finally:
+    # Always clean up temp file
+    try:
+        os.unlink(json_file)
+    except OSError:
+        pass
+
+settings['hooks'] = {
+    'Notification': [{
+        'matcher': matcher,
+        'hooks': [{'type': 'command', 'command': f'{script} notification claude'}]
+    }],
+    'Stop': [{
+        'matcher': '',
+        'hooks': [{'type': 'command', 'command': f'{script} stop claude'}]
+    }]
 }
-EOF
+
+# Atomic write: write to temp file, then rename
+dir_path = os.path.dirname(file_path)
+content = json.dumps(settings, indent=2)
+
+fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix='.tmp.')
+try:
+    with os.fdopen(fd, 'w') as f:
+        f.write(content)
+        f.write('\n')
+    os.replace(tmp_path, file_path)
+except Exception:
+    os.unlink(tmp_path)
+    raise
+PYTHON
+    else
+        # No jq or python - abort to avoid data loss
+        echo "Error: jq or python3 required for config preservation" >&2
+        echo "Install jq: brew install jq" >&2
+        return 1
     fi
 }
 
@@ -299,18 +402,62 @@ disable_hooks_in_settings() {
     if [[ ! -f "$GLOBAL_SETTINGS_FILE" ]]; then
         return 0
     fi
-    
-    # Remove hooks using jq if available
+
+    # Remove hooks using jq (preferred) or python (fallback)
     if has_jq; then
-        local settings=$(cat "$GLOBAL_SETTINGS_FILE")
-        echo "$settings" | jq 'del(.hooks)' > "$GLOBAL_SETTINGS_FILE"
-    else
-        # Manual removal - just keep model setting
-        if grep -q '"model"' "$GLOBAL_SETTINGS_FILE"; then
-            echo '{"model": "opus"}' > "$GLOBAL_SETTINGS_FILE"
-        else
-            echo '{}' > "$GLOBAL_SETTINGS_FILE"
+        local settings new_settings
+        settings=$(cat "$GLOBAL_SETTINGS_FILE")
+
+        # Apply jq filter with error checking
+        if ! new_settings=$(echo "$settings" | jq 'del(.hooks)' 2>/dev/null); then
+            echo "Error: Failed to parse configuration JSON" >&2
+            echo "File unchanged: $GLOBAL_SETTINGS_FILE" >&2
+            return 1
         fi
+
+        # Only write if there's actual content left (not just {})
+        if [[ "$new_settings" != "{}" ]]; then
+            atomic_write "$GLOBAL_SETTINGS_FILE" "$new_settings"
+        else
+            # File would be empty, just remove it
+            rm -f "$GLOBAL_SETTINGS_FILE"
+        fi
+    elif has_python3; then
+        python3 - "$GLOBAL_SETTINGS_FILE" << 'PYTHON'
+import sys
+import json
+import os
+import tempfile
+
+file_path = sys.argv[1]
+with open(file_path, 'r') as f:
+    settings = json.load(f)
+
+if 'hooks' in settings:
+    del settings['hooks']
+
+if settings:
+    # Atomic write: write to temp file, then rename
+    dir_path = os.path.dirname(file_path)
+    content = json.dumps(settings, indent=2)
+
+    fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix='.tmp.')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(content)
+            f.write('\n')
+        os.replace(tmp_path, file_path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+else:
+    os.remove(file_path)
+PYTHON
+    else
+        # No jq or python - abort to avoid data loss
+        echo "Error: jq or python3 required to safely disable hooks" >&2
+        echo "Install jq: brew install jq" >&2
+        return 1
     fi
 }
 
@@ -325,35 +472,98 @@ enable_project_hooks_in_settings() {
     # Ensure .claude directory exists
     mkdir -p "$project_root/.claude"
 
-    # Create project settings.json with hooks
-    cat > "$project_settings" << EOF
-{
-  "hooks": {
-    "Notification": [
-      {
-        "matcher": "$notify_matcher",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$notify_script notification claude '$project_name'"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$notify_script stop claude '$project_name'"
-          }
-        ]
-      }
-    ]
-  }
+    # Read existing settings or create new
+    local settings="{}"
+    if [[ -f "$project_settings" ]]; then
+        settings=$(cat "$project_settings")
+    fi
+
+    # Add hooks using jq (preferred) or python (fallback)
+    if has_jq; then
+        # Pre-quote script and name for safe shell execution
+        local quoted_script=$(shell_quote "$notify_script")
+        local quoted_name=$(shell_quote "$project_name")
+
+        safe_jq_update "$project_settings" '.hooks = {
+            "Notification": [{
+                "matcher": $matcher,
+                "hooks": [{
+                    "type": "command",
+                    "command": ($qscript + " notification claude " + $qname)
+                }]
+            }],
+            "Stop": [{
+                "matcher": "",
+                "hooks": [{
+                    "type": "command",
+                    "command": ($qscript + " stop claude " + $qname)
+                }]
+            }]
+        }' --arg matcher "$notify_matcher" --arg qscript "$quoted_script" --arg qname "$quoted_name"
+    elif has_python3; then
+        # Use Python fallback - pass JSON via temp file to avoid shell escaping issues
+        local tmp_json
+        tmp_json=$(mktemp) || { echo "Error: Failed to create temp file" >&2; return 1; }
+
+        printf '%s\n' "$settings" > "$tmp_json"
+
+        python3 - "$project_settings" "$notify_script" "$notify_matcher" "$project_name" "$tmp_json" << 'PYTHON'
+import sys
+import json
+import tempfile
+import os
+import shlex
+
+file_path = sys.argv[1]
+script = sys.argv[2]
+matcher = sys.argv[3]
+name = sys.argv[4]
+json_file = sys.argv[5]
+
+try:
+    with open(json_file, 'r') as f:
+        settings = json.load(f)
+finally:
+    try:
+        os.unlink(json_file)
+    except OSError:
+        pass
+
+# Shell-quote script and name for safe command execution
+qscript = shlex.quote(script)
+qname = shlex.quote(name)
+
+settings['hooks'] = {
+    'Notification': [{
+        'matcher': matcher,
+        'hooks': [{'type': 'command', 'command': f'{qscript} notification claude {qname}'}]
+    }],
+    'Stop': [{
+        'matcher': '',
+        'hooks': [{'type': 'command', 'command': f'{qscript} stop claude {qname}'}]
+    }]
 }
-EOF
+
+# Atomic write: write to temp file, then rename
+dir_path = os.path.dirname(file_path)
+content = json.dumps(settings, indent=2)
+
+fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix='.tmp.')
+try:
+    with os.fdopen(fd, 'w') as f:
+        f.write(content)
+        f.write('\n')
+    os.replace(tmp_path, file_path)
+except Exception:
+    os.unlink(tmp_path)
+    raise
+PYTHON
+    else
+        # No jq or python - abort to avoid data loss
+        echo "Error: jq or python3 required for config preservation" >&2
+        echo "Install jq: brew install jq" >&2
+        return 1
+    fi
 }
 
 # Check if project has settings.json with code-notify hooks
@@ -447,16 +657,14 @@ enable_gemini_hooks() {
     # Ensure .gemini directory exists
     mkdir -p "$GEMINI_HOME"
 
-    # Read existing settings or create new
-    local settings="{}"
+    # Backup existing config
     if [[ -f "$GEMINI_SETTINGS_FILE" ]]; then
         backup_config "$GEMINI_SETTINGS_FILE"
-        settings=$(cat "$GEMINI_SETTINGS_FILE")
     fi
 
     if has_jq; then
-        # Use jq to merge settings
-        settings=$(echo "$settings" | jq --arg script "$notify_script" '
+        # Use safe_jq_update for error checking
+        safe_jq_update "$GEMINI_SETTINGS_FILE" '
             .tools.enableHooks = true |
             .hooks.enabled = true |
             .hooks.Notification = [{
@@ -477,46 +685,79 @@ enable_gemini_hooks() {
                     "description": "Desktop notification when task complete"
                 }]
             }]
-        ')
-        echo "$settings" > "$GEMINI_SETTINGS_FILE"
+        ' --arg script "$notify_script"
+    elif has_python3; then
+        # Use Python fallback - pass JSON via temp file to avoid shell escaping issues
+        local settings="{}"
+        if [[ -f "$GEMINI_SETTINGS_FILE" ]]; then
+            settings=$(cat "$GEMINI_SETTINGS_FILE")
+        fi
+
+        local tmp_json
+        tmp_json=$(mktemp) || { echo "Error: Failed to create temp file" >&2; return 1; }
+
+        printf '%s\n' "$settings" > "$tmp_json"
+
+        python3 - "$GEMINI_SETTINGS_FILE" "$notify_script" "$tmp_json" << 'PYTHON'
+import sys
+import json
+import tempfile
+import os
+
+file_path = sys.argv[1]
+script = sys.argv[2]
+json_file = sys.argv[3]
+
+try:
+    with open(json_file, 'r') as f:
+        settings = json.load(f)
+finally:
+    # Always clean up temp file
+    try:
+        os.unlink(json_file)
+    except OSError:
+        pass
+
+settings.setdefault('tools', {})['enableHooks'] = True
+settings.setdefault('hooks', {})['enabled'] = True
+settings['hooks']['Notification'] = [{
+    'matcher': '',
+    'hooks': [{
+        'name': 'code-notify-notification',
+        'type': 'command',
+        'command': f'{script} notification gemini',
+        'description': 'Desktop notification when input needed'
+    }]
+}]
+settings['hooks']['AfterAgent'] = [{
+    'matcher': '',
+    'hooks': [{
+        'name': 'code-notify-complete',
+        'type': 'command',
+        'command': f'{script} stop gemini',
+        'description': 'Desktop notification when task complete'
+    }]
+}]
+
+# Atomic write: write to temp file, then rename
+dir_path = os.path.dirname(file_path)
+content = json.dumps(settings, indent=2)
+
+fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix='.tmp.')
+try:
+    with os.fdopen(fd, 'w') as f:
+        f.write(content)
+        f.write('\n')
+    os.replace(tmp_path, file_path)
+except Exception:
+    os.unlink(tmp_path)
+    raise
+PYTHON
     else
-        # Manual JSON construction without jq
-        cat > "$GEMINI_SETTINGS_FILE" << EOF
-{
-  "tools": {
-    "enableHooks": true
-  },
-  "hooks": {
-    "enabled": true,
-    "Notification": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "name": "code-notify-notification",
-            "type": "command",
-            "command": "$notify_script notification gemini",
-            "description": "Desktop notification when input needed"
-          }
-        ]
-      }
-    ],
-    "AfterAgent": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "name": "code-notify-complete",
-            "type": "command",
-            "command": "$notify_script stop gemini",
-            "description": "Desktop notification when task complete"
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
+        # No jq or python - abort to avoid data loss
+        echo "Error: jq or python3 required for config preservation" >&2
+        echo "Install jq: brew install jq" >&2
+        return 1
     fi
 }
 
@@ -529,11 +770,68 @@ disable_gemini_hooks() {
     backup_config "$GEMINI_SETTINGS_FILE"
 
     if has_jq; then
-        local settings=$(cat "$GEMINI_SETTINGS_FILE")
-        echo "$settings" | jq 'del(.hooks.Notification) | del(.hooks.AfterAgent)' > "$GEMINI_SETTINGS_FILE"
+        local settings new_settings
+        settings=$(cat "$GEMINI_SETTINGS_FILE")
+
+        # Remove code-notify specific hooks with error checking
+        if ! new_settings=$(echo "$settings" | jq 'del(.hooks.Notification) | del(.hooks.AfterAgent) | del(.hooks.enabled)' 2>/dev/null); then
+            echo "Error: Failed to parse configuration JSON" >&2
+            echo "File unchanged: $GEMINI_SETTINGS_FILE" >&2
+            return 1
+        fi
+
+        # If hooks object is now empty, remove it entirely
+        if ! new_settings=$(echo "$new_settings" | jq 'if .hooks == {} then del(.hooks) else . end' 2>/dev/null); then
+            echo "Error: Failed to process configuration JSON" >&2
+            echo "File unchanged: $GEMINI_SETTINGS_FILE" >&2
+            return 1
+        fi
+
+        if [[ "$new_settings" != "{}" ]]; then
+            atomic_write "$GEMINI_SETTINGS_FILE" "$new_settings"
+        else
+            rm -f "$GEMINI_SETTINGS_FILE"
+        fi
+    elif has_python3; then
+        python3 - "$GEMINI_SETTINGS_FILE" << 'PYTHON'
+import sys
+import json
+import os
+import tempfile
+
+file_path = sys.argv[1]
+with open(file_path, 'r') as f:
+    settings = json.load(f)
+
+if 'hooks' in settings:
+    settings['hooks'].pop('Notification', None)
+    settings['hooks'].pop('AfterAgent', None)
+    settings['hooks'].pop('enabled', None)
+    if not settings['hooks']:
+        del settings['hooks']
+
+if settings:
+    # Atomic write: write to temp file, then rename
+    dir_path = os.path.dirname(file_path)
+    content = json.dumps(settings, indent=2)
+
+    fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix='.tmp.')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(content)
+            f.write('\n')
+        os.replace(tmp_path, file_path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+else:
+    os.remove(file_path)
+PYTHON
     else
-        # Without jq, just remove the hooks section entirely
-        echo '{"tools": {"enableHooks": false}}' > "$GEMINI_SETTINGS_FILE"
+        # No jq or python - abort to avoid data loss
+        echo "Error: jq or python3 required to safely disable hooks" >&2
+        echo "Install jq: brew install jq" >&2
+        return 1
     fi
 }
 
