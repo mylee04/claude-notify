@@ -373,7 +373,7 @@ enable_notifications_global() {
 
     if [[ -z "$installed_tools" ]]; then
         warning "No supported AI tools detected"
-        info "Supported tools: Claude Code, Codex, Gemini CLI"
+        info "Supported tools: Claude Code, Codex, Gemini CLI, Oh My Pi (omp)"
         return 1
     fi
 
@@ -440,6 +440,7 @@ enable_single_tool() {
         "claude") config_file="$GLOBAL_SETTINGS_FILE" ;;
         "codex") config_file="$CODEX_CONFIG_FILE" ;;
         "gemini") config_file="$GEMINI_SETTINGS_FILE" ;;
+        "omp") config_file="$OMP_EXTENSION_FILE" ;;
     esac
 
     success "$tool: ENABLED"
@@ -470,7 +471,7 @@ disable_notifications_global() {
     # No tool specified - disable all enabled tools
     local disabled_count=0
 
-    for t in claude codex gemini; do
+    for t in claude codex gemini omp; do
         if is_tool_enabled "$t"; then
             if disable_single_tool "$t" "quiet"; then
                 ((disabled_count++))
@@ -578,6 +579,19 @@ show_status() {
         fi
     else
         echo "  ${DIM}- Gemini CLI: not installed${RESET}"
+    fi
+
+    # Oh My Pi (omp)
+    if is_tool_installed "omp"; then
+        if is_tool_enabled "omp"; then
+            echo "  ${CHECK_MARK} omp: ${GREEN}ENABLED${RESET}"
+            echo "     Config: $OMP_EXTENSION_FILE"
+            echo "     Events: completion via agent_end extension"
+        else
+            echo "  ${MUTE} omp: ${DIM}DISABLED${RESET}"
+        fi
+    else
+        echo "  ${DIM}- omp: not installed${RESET}"
     fi
 
     # Voice status

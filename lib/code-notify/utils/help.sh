@@ -14,7 +14,7 @@ show_help() {
 ${BOLD}Code-Notify${RESET} - Desktop notifications for AI coding tools
 
 ${BOLD}SUPPORTED TOOLS:${RESET}
-    Claude Code, OpenAI Codex, Google Gemini CLI
+    Claude Code, OpenAI Codex, Google Gemini CLI, Oh My Pi (omp)
 
 ${BOLD}USAGE:${RESET}
     $cmd_name <command> [tool]
@@ -22,7 +22,7 @@ ${BOLD}USAGE:${RESET}
 ${BOLD}COMMANDS:${RESET}
     ${GREEN}on${RESET}              Enable notifications (all detected tools)
     ${GREEN}on${RESET} all          Enable notifications (explicit alias for all detected tools)
-    ${GREEN}on${RESET} <tool>       Enable for specific tool (claude/codex/gemini)
+    ${GREEN}on${RESET} <tool>       Enable for specific tool (claude/codex/gemini/omp)
     ${GREEN}off${RESET}             Disable notifications (all tools)
     ${GREEN}off${RESET} all         Disable notifications (explicit alias for all tools)
     ${GREEN}off${RESET} <tool>      Disable for specific tool
@@ -51,6 +51,7 @@ ${BOLD}TOOL NAMES:${RESET}
     ${CYAN}claude${RESET}          Claude Code
     ${CYAN}codex${RESET}           OpenAI Codex CLI
     ${CYAN}gemini${RESET}          Google Gemini CLI
+    ${CYAN}omp${RESET}             Oh My Pi (omp)
 
 ${BOLD}PROJECT COMMANDS:${RESET}
     ${GREEN}project on${RESET}      Enable for current project
@@ -67,6 +68,7 @@ ${BOLD}ALERT TYPES:${RESET}
     Claude events: ${CYAN}SubagentStart${RESET}, ${CYAN}SubagentStop${RESET}, ${CYAN}TeammateIdle${RESET}, ${CYAN}TaskCreated${RESET}, ${CYAN}TaskCompleted${RESET}
     Note: alert-type matching applies to Claude Code and Gemini CLI hooks.
           Codex currently exposes completion events through its notify payload.
+          omp exposes completion events through a generated extension module.
 
 ${BOLD}VOICE COMMANDS:${RESET}
     ${GREEN}voice on${RESET}            Enable voice for all tools

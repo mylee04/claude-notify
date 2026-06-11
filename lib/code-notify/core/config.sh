@@ -54,6 +54,12 @@ CODEX_CONFIG_FILE="$CODEX_HOME/config.toml"
 GEMINI_HOME="${GEMINI_HOME:-$HOME/.gemini}"
 GEMINI_SETTINGS_FILE="$GEMINI_HOME/settings.json"
 
+# Oh My Pi (omp) paths
+OMP_HOME="${OMP_HOME:-$HOME/.omp}"
+OMP_EXTENSIONS_DIR="${OMP_EXTENSIONS_DIR:-$OMP_HOME/agent/extensions}"
+OMP_EXTENSION_FILE="$OMP_EXTENSIONS_DIR/code-notify.js"
+OMP_EXTENSION_MARKER="code-notify: managed omp extension"
+
 # Ensure config directory exists
 ensure_config_dir() {
     mkdir -p "$CONFIG_DIR" "$BACKUP_DIR"
@@ -1552,6 +1558,73 @@ PYTHON
 }
 
 # ============================================
+# Oh My Pi (omp) integration
+# ============================================
+# omp loads JS/TS extension modules from ~/.omp/agent/extensions instead of
+# reading hook commands from a config file. So enabling = writing a managed
+# extension that forwards omp's agent_end event to notifier.sh; disabling =
+# removing that file. All downstream delivery (sound, voice, channels,
+# click-through, kill switch, rate limiting) is reused through notifier.sh.
+
+# Generate the omp extension module that forwards completion events to the notifier
+generate_omp_extension() {
+    local notify_script="$1"
+    # Escape backslashes and double quotes for safe embedding in the JS string literal
+    notify_script="${notify_script//\\/\\\\}"
+    notify_script="${notify_script//\"/\\\"}"
+    cat << EOF
+// ${OMP_EXTENSION_MARKER}
+// Created by \`cn on omp\`; removed by \`cn off omp\`. Do not edit -- regenerated on enable.
+// omp (Oh My Pi) loads extension modules instead of config-file hooks, so this
+// file forwards the "agent finished" event to code-notify's notifier.
+const NOTIFIER = "${notify_script}";
+
+export default function codeNotify(pi) {
+  pi.on("agent_end", async (_event, ctx) => {
+    // Only ping the top-level interactive session; skip subagents/headless runs
+    // unless OMP_NOTIFY_ALL=1 is set.
+    if (!ctx.hasUI && process.env.OMP_NOTIFY_ALL !== "1") return;
+    const project = (ctx.cwd || "").split("/").filter(Boolean).pop() || "";
+    try {
+      await pi.exec(NOTIFIER, ["stop", "omp", project], { timeout: 5000 });
+    } catch {
+      // Never let notification failures disrupt the session.
+    }
+  });
+}
+EOF
+}
+
+# Check if omp notifications are enabled
+is_omp_enabled() {
+    [[ -f "$OMP_EXTENSION_FILE" ]] && grep -q "$OMP_EXTENSION_MARKER" "$OMP_EXTENSION_FILE" 2>/dev/null
+}
+
+# Enable omp notifications by writing a managed extension module
+enable_omp_hooks() {
+    local notify_script
+    notify_script="$(get_notify_script)"
+
+    mkdir -p "$OMP_EXTENSIONS_DIR"
+
+    # We own this file entirely, so a plain atomic write is enough (no jq/python merge needed)
+    atomic_write "$OMP_EXTENSION_FILE" "$(generate_omp_extension "$notify_script")"
+}
+
+# Disable omp notifications by removing our managed extension module
+disable_omp_hooks() {
+    if [[ ! -f "$OMP_EXTENSION_FILE" ]]; then
+        return 0
+    fi
+
+    # Only remove the file if it is the one code-notify generated
+    if grep -q "$OMP_EXTENSION_MARKER" "$OMP_EXTENSION_FILE" 2>/dev/null; then
+        rm -f "$OMP_EXTENSION_FILE"
+    fi
+    return 0
+}
+
+# ============================================
 # Multi-tool helpers
 # ============================================
 
@@ -1568,6 +1641,9 @@ enable_tool() {
             ;;
         "gemini")
             enable_gemini_hooks
+            ;;
+        "omp")
+            enable_omp_hooks
             ;;
         *)
             return 1
@@ -1589,6 +1665,9 @@ disable_tool() {
         "gemini")
             disable_gemini_hooks
             ;;
+        "omp")
+            disable_omp_hooks
+            ;;
         *)
             return 1
             ;;
@@ -1608,6 +1687,9 @@ is_tool_enabled() {
             ;;
         "gemini")
             is_gemini_enabled
+            ;;
+        "omp")
+            is_omp_enabled
             ;;
         *)
             return 1

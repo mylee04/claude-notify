@@ -121,6 +121,18 @@ detect_gemini_cli() {
     return 1
 }
 
+# Detect Oh My Pi (omp) installation
+detect_omp() {
+    # Check if the omp (or legacy pi) command exists, or the config dir is present
+    if command -v omp &> /dev/null || command -v pi &> /dev/null || [[ -d "$HOME/.omp" ]]; then
+        # Return config location
+        local config_dir="$HOME/.omp"
+        echo "$config_dir"
+        return 0
+    fi
+    return 1
+}
+
 # Get list of all installed AI coding tools
 get_installed_tools() {
     local tools=()
@@ -135,6 +147,10 @@ get_installed_tools() {
 
     if detect_gemini_cli &> /dev/null; then
         tools+=("gemini")
+    fi
+
+    if detect_omp &> /dev/null; then
+        tools+=("omp")
     fi
 
     # Return space-separated list
@@ -154,6 +170,9 @@ is_tool_installed() {
             ;;
         "gemini")
             detect_gemini_cli &> /dev/null
+            ;;
+        "omp")
+            detect_omp &> /dev/null
             ;;
         *)
             return 1
