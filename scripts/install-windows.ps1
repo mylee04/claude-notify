@@ -1908,24 +1908,31 @@ function Invoke-CodeNotify {
     )
 
     $toolCommands = @("claude", "codex", "gemini")
+    $unsupportedTools = @("omp")
 
     switch ($Command.ToLower()) {
         "on" {
-            if ($SubCommand -and ($toolCommands -contains $SubCommand.ToLower())) {
+            if ($SubCommand -and ($unsupportedTools -contains $SubCommand.ToLower())) {
+                Write-Warning "omp is not yet supported on Windows. Windows support is planned."
+            } elseif ($SubCommand -and ($toolCommands -contains $SubCommand.ToLower())) {
                 Enable-Notifications -Tool $SubCommand
             } else {
                 Enable-Notifications
             }
         }
         "off" {
-            if ($SubCommand -and ($toolCommands -contains $SubCommand.ToLower())) {
+            if ($SubCommand -and ($unsupportedTools -contains $SubCommand.ToLower())) {
+                Write-Warning "omp is not yet supported on Windows. Windows support is planned."
+            } elseif ($SubCommand -and ($toolCommands -contains $SubCommand.ToLower())) {
                 Disable-Notifications -Tool $SubCommand
             } else {
                 Disable-Notifications
             }
         }
         "status" {
-            if ($SubCommand -and ($toolCommands -contains $SubCommand.ToLower())) {
+            if ($SubCommand -and ($unsupportedTools -contains $SubCommand.ToLower())) {
+                Write-Warning "omp is not yet supported on Windows. Windows support is planned."
+            } elseif ($SubCommand -and ($toolCommands -contains $SubCommand.ToLower())) {
                 Show-Status -Tool $SubCommand
             } else {
                 Show-Status

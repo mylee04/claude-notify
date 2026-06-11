@@ -1580,15 +1580,29 @@ generate_omp_extension() {
 const NOTIFIER = "${notify_script}";
 
 export default function codeNotify(pi) {
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_end", async (event, ctx) => {
     // Only ping the top-level interactive session; skip subagents/headless runs
     // unless OMP_NOTIFY_ALL=1 is set.
     if (!ctx.hasUI && process.env.OMP_NOTIFY_ALL !== "1") return;
-    const project = (ctx.cwd || "").split("/").filter(Boolean).pop() || "";
+    // Map the final stop reason to the notifier hook type so a failed run produces an
+    // error notification instead of a false success. Scan back to the last assistant
+    // turn: the array can end in a tool-result or custom (bash/compaction) message
+    // that would otherwise mask the outcome.
+    const messages = Array.isArray(event?.messages) ? event.messages : [];
+    let reason;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] && messages[i].role === "assistant") { reason = messages[i].stopReason; break; }
+    }
+    const hook = (reason === "error" || reason === "aborted" || reason === "length")
+      ? "error" : "stop";
     try {
-      await pi.exec(NOTIFIER, ["stop", "omp", project], { timeout: 5000 });
-    } catch {
+      // Pass the project name via cwd so the notifier derives it from basename(\$PWD),
+      // keeping the notification scoped globally (not project-scoped) so that
+      // \`cn off\` / the global kill switch correctly suppresses it.
+      await pi.exec(NOTIFIER, [hook, "omp"], { timeout: 5000, cwd: ctx.cwd || undefined });
+    } catch (err) {
       // Never let notification failures disrupt the session.
+      pi.logger?.debug?.(\`code-notify: notifier exec failed: \${err}\`);
     }
   });
 }
@@ -1605,9 +1619,16 @@ enable_omp_hooks() {
     local notify_script
     notify_script="$(get_notify_script)"
 
-    mkdir -p "$OMP_EXTENSIONS_DIR"
+    # Refuse to overwrite a file we didn't create (consistent with disable_omp_hooks which
+    # preserves non-managed files). Check before creating any dirs so a refused enable
+    # leaves the filesystem untouched.
+    if [[ -f "$OMP_EXTENSION_FILE" ]] && ! grep -q "$OMP_EXTENSION_MARKER" "$OMP_EXTENSION_FILE" 2>/dev/null; then
+        error "Refusing to overwrite existing non-code-notify extension: $OMP_EXTENSION_FILE"
+        info "Remove or rename that file manually, then run \`cn on omp\` again."
+        return 1
+    fi
 
-    # We own this file entirely, so a plain atomic write is enough (no jq/python merge needed)
+    mkdir -p "$OMP_EXTENSIONS_DIR"
     atomic_write "$OMP_EXTENSION_FILE" "$(generate_omp_extension "$notify_script")"
 }
 
@@ -1617,7 +1638,8 @@ disable_omp_hooks() {
         return 0
     fi
 
-    # Only remove the file if it is the one code-notify generated
+    # Only remove our own managed file. Never touch ~/.omp/agent or its subdirs --
+    # that is omp's data directory (agent.db, sessions, config.yml, ...), not ours.
     if grep -q "$OMP_EXTENSION_MARKER" "$OMP_EXTENSION_FILE" 2>/dev/null; then
         rm -f "$OMP_EXTENSION_FILE"
     fi

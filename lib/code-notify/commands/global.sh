@@ -951,12 +951,13 @@ show_voice_status() {
     fi
 
     # Per-tool voice
-    for tool in claude codex gemini; do
+    for tool in claude codex gemini omp; do
         local tool_display
         case "$tool" in
             "claude") tool_display="Claude" ;;
             "codex") tool_display="Codex" ;;
             "gemini") tool_display="Gemini" ;;
+            "omp") tool_display="omp" ;;
         esac
 
         if is_voice_enabled "tool" "$tool"; then

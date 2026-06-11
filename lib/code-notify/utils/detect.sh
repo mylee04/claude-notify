@@ -121,13 +121,16 @@ detect_gemini_cli() {
     return 1
 }
 
-# Detect Oh My Pi (omp) installation
+# Detect Oh My Pi (omp) installation.
+# Binary-only, like detect_codex / detect_gemini_cli: a directory is not a reliable
+# "installed" signal here. ~/.omp/agent is omp's data dir (agent.db, sessions, ...) --
+# it persists after the binary is uninstalled, and code-notify itself creates the
+# extensions/ subdir on enable, so keying on it gives false positives. The legacy `pi`
+# alias is intentionally NOT accepted: `pi` is a common generic binary name and would
+# misfire. OMP_HOME is still honoured for the echoed config location.
 detect_omp() {
-    # Check if the omp (or legacy pi) command exists, or the config dir is present
-    if command -v omp &> /dev/null || command -v pi &> /dev/null || [[ -d "$HOME/.omp" ]]; then
-        # Return config location
-        local config_dir="$HOME/.omp"
-        echo "$config_dir"
+    if command -v omp &> /dev/null; then
+        echo "${OMP_HOME:-$HOME/.omp}"
         return 0
     fi
     return 1
