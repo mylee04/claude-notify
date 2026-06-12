@@ -51,7 +51,7 @@ cn usage status
 
 ## Features
 
-- **Multi-tool support** - Claude Code, OpenAI Codex, Google Gemini CLI
+- **Multi-tool support** - Claude Code, OpenAI Codex, Google Gemini CLI, Oh My Pi (omp)
 - **Works everywhere** - Terminal, VSCode, Cursor, or any editor
 - **Cross-platform** - macOS, Linux, Windows
 - **Native notifications** - Uses system notification APIs
@@ -145,6 +145,7 @@ npm packages are published with GitHub Actions Trusted Publisher and npm provena
 | `cn on claude`       | Enable for Claude Code only                  |
 | `cn on codex`        | Enable for Codex only                        |
 | `cn on gemini`       | Enable for Gemini CLI only                   |
+| `cn on omp`          | Enable for Oh My Pi (omp) only               |
 | `cn off`             | Disable notifications                        |
 | `cn off all`         | Explicit alias for disabling all tools       |
 | `cn test`            | Send test notification                       |
@@ -173,9 +174,12 @@ Code-Notify uses the hook systems built into AI coding tools:
 - **Claude Code**: `~/.claude/settings.json`
 - **Codex**: `~/.codex/config.toml`
 - **Gemini CLI**: `~/.gemini/settings.json`
+- **Oh My Pi (omp)**: `~/.omp/agent/extensions/code-notify.js`
 
 For Codex, Code-Notify configures `notify = ["/absolute/path/to/notifier.sh", "codex"]` and reads the JSON payload Codex appends on completion.
 Codex currently exposes completion events through `notify`; approval and `request_permissions` prompts do not currently arrive through this hook.
+
+For omp, Code-Notify writes a small managed extension module to `~/.omp/agent/extensions/code-notify.js`, because omp loads extension modules instead of reading hook commands from a config file. The extension forwards omp's `agent_end` event to the same `notifier.sh`, so sound, voice, Slack/Discord channels, click-through, the global mute switch, and rate limiting all work unchanged. Like Codex, omp currently exposes completion events; approval and idle prompts are not yet wired.
 
 When enabled, it adds hooks that call the notification script when tasks complete:
 

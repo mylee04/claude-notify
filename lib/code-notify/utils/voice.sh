@@ -72,6 +72,7 @@ disable_voice() {
             rm -f "$VOICE_DIR/voice-claude"
             rm -f "$VOICE_DIR/voice-codex"
             rm -f "$VOICE_DIR/voice-gemini"
+            rm -f "$VOICE_DIR/voice-omp"
             ;;
         "global"|*)
             rm -f "$GLOBAL_VOICE_FILE"

@@ -251,6 +251,14 @@ else
     test_fail "ask_user alert preservation failed"
 fi
 
+# Test 24: omp (Oh My Pi) extension install/detect/notify
+test_start "omp extension support"
+if bash tests/test-omp-extension.sh >/dev/null 2>&1; then
+    test_pass
+else
+    test_fail "omp extension support failed"
+fi
+
 # Summary
 echo ""
 echo "Test Summary:"

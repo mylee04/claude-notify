@@ -22,7 +22,7 @@ run_enable_all_alias_test() {
         source "$SCRIPT_DIR/../lib/code-notify/core/config.sh"
         source "$SCRIPT_DIR/../lib/code-notify/commands/global.sh"
 
-        get_installed_tools() { echo "claude codex gemini"; }
+        get_installed_tools() { echo "claude codex gemini omp"; }
         is_tool_installed() { return 0; }
         is_tool_enabled() { return 1; }
         enable_tool() {
@@ -35,7 +35,7 @@ run_enable_all_alias_test() {
 
         local enabled_tools
         enabled_tools="$(sort "$HOME/enabled-tools" | tr '\n' ' ')"
-        [[ "$enabled_tools" == "claude codex gemini " ]] || fail "cn on all did not enable every detected tool"
+        [[ "$enabled_tools" == "claude codex gemini omp " ]] || fail "cn on all did not enable every detected tool"
     )
 
     rm -rf "$test_dir"
@@ -66,7 +66,7 @@ run_disable_all_alias_test() {
 
         local disabled_tools
         disabled_tools="$(sort "$HOME/disabled-tools" | tr '\n' ' ')"
-        [[ "$disabled_tools" == "claude codex gemini " ]] || fail "cn off all did not disable every enabled tool"
+        [[ "$disabled_tools" == "claude codex gemini omp " ]] || fail "cn off all did not disable every enabled tool"
     )
 
     rm -rf "$test_dir"

@@ -128,6 +128,7 @@ get_tool_display_name() {
         "claude") echo "Claude" ;;
         "codex") echo "Codex" ;;
         "gemini") echo "Gemini" ;;
+        "omp") echo "omp" ;;
         *) echo "AI" ;;
     esac
 }

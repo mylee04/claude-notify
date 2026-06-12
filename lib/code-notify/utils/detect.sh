@@ -121,6 +121,21 @@ detect_gemini_cli() {
     return 1
 }
 
+# Detect Oh My Pi (omp) installation.
+# Binary-only, like detect_codex / detect_gemini_cli: a directory is not a reliable
+# "installed" signal here. ~/.omp/agent is omp's data dir (agent.db, sessions, ...) --
+# it persists after the binary is uninstalled, and code-notify itself creates the
+# extensions/ subdir on enable, so keying on it gives false positives. The legacy `pi`
+# alias is intentionally NOT accepted: `pi` is a common generic binary name and would
+# misfire. OMP_HOME is still honoured for the echoed config location.
+detect_omp() {
+    if command -v omp &> /dev/null; then
+        echo "${OMP_HOME:-$HOME/.omp}"
+        return 0
+    fi
+    return 1
+}
+
 # Get list of all installed AI coding tools
 get_installed_tools() {
     local tools=()
@@ -135,6 +150,10 @@ get_installed_tools() {
 
     if detect_gemini_cli &> /dev/null; then
         tools+=("gemini")
+    fi
+
+    if detect_omp &> /dev/null; then
+        tools+=("omp")
     fi
 
     # Return space-separated list
@@ -154,6 +173,9 @@ is_tool_installed() {
             ;;
         "gemini")
             detect_gemini_cli &> /dev/null
+            ;;
+        "omp")
+            detect_omp &> /dev/null
             ;;
         *)
             return 1
