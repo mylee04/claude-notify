@@ -8,23 +8,26 @@
 
 Desktop notifications for AI coding tools - get alerts when tasks complete or input is needed.
 
-## Latest: Usage Limit Reset Alerts
+## Latest: Oh My Pi (omp) Support
 
-Code-Notify can now watch Codex and Claude usage limits and tell you when tokens are back.
+Code-Notify now supports [Oh My Pi](https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent) (`omp`) alongside Claude Code, Codex, and Gemini CLI.
 
-- **Daily reset**: `Codex token daily limit reset`
-- **Weekly reset**: `Codex token weekly limit reset`
-- **Low-usage warnings**: 20% and 10% remaining
-- **Delivery options**: desktop notification, voice, sound, Slack, or Discord
+- **Enable omp notifications**: `cn on omp`
+- **Disable omp notifications**: `cn off omp`
+- **Check status**: `cn status`
+- **Delivery options**: desktop notification, voice, sound, Slack, Discord, and macOS click-through
 
-Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-daily-limit-reset.m4a) · [Weekly reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-weekly-limit-reset.m4a)
+omp uses a managed extension at `~/.omp/agent/extensions/code-notify.js` and forwards completion events into the existing Code-Notify notifier.
 
 ```bash
-cn usage setup --watch
-cn usage status
+cn on omp
+cn test omp
+cn status
 ```
 
-`cn usage setup --watch` enables usage alerts, turns on distinct reset voice/sound, and starts a background watcher.
+Usage reset alerts are still available for Codex and Claude: `cn usage setup --watch`.
+
+Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-daily-limit-reset.m4a) · [Weekly reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-weekly-limit-reset.m4a)
 
 ![Usage limit reset alerts terminal demo](assets/usage-alerts-terminal.svg)
 
@@ -33,7 +36,7 @@ cn usage status
   <img src="assets/multi-tools-support-02.png" width="48%" alt="All tools enabled"/>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.10.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
+[![Version](https://img.shields.io/badge/version-1.11.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-supported-green.svg)](https://www.apple.com/macos)
 [![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
@@ -41,11 +44,11 @@ cn usage status
 
 ---
 
-## What's New in v1.10.0
+## What's New in v1.11.0
 
-- **One-command usage setup**: `cn usage setup --watch` configures Codex/Claude usage alerts and starts the background watcher
-- **Background usage watcher**: macOS/Linux users can start, stop, restart, and inspect usage watching with `cn usage watch ...`
-- **Usage alert docs**: README now shows the terminal setup flow and Slack/Discord reset alert routing
+- **Oh My Pi support**: `cn on omp`, `cn off omp`, and `cn status` now work for the `omp` CLI
+- **Managed omp extension**: Code-Notify writes `~/.omp/agent/extensions/code-notify.js` and preserves user-owned files
+- **Shared delivery pipeline**: omp completion notifications reuse sound, voice, Slack/Discord, click-through, mute, and rate limiting
 
 ---
 
@@ -60,7 +63,7 @@ cn usage status
 - **Voice announcements** - Hear when tasks complete (macOS, Windows)
 - **Slack/Discord delivery** - Mirror notifications to incoming webhooks
 - **Usage alerts** - Opt-in Codex/Claude 20%, 10%, and reset notifications
-- **Tool-specific messages** - "Claude completed the task", "Codex completed the task"
+- **Tool-specific messages** - "Claude completed the task", "Codex completed the task", "omp completed the task"
 - **Project-specific settings** - Different configs per project
 - **Quick aliases** - `cn` and `cnp` for fast access
 
