@@ -20,6 +20,7 @@ source "$NOTIFIER_DIR/../utils/usage.sh"
 source "$NOTIFIER_DIR/../utils/click-through-store.sh"
 source "$NOTIFIER_DIR/../utils/click-through-runtime.sh"
 source "$NOTIFIER_DIR/../utils/click-through-resolver.sh"
+source "$NOTIFIER_DIR/../utils/lang.sh"
 
 has_jq() {
     command -v jq >/dev/null 2>&1
@@ -417,79 +418,79 @@ fi
 case "$HOOK_TYPE" in
     "stop")
         TITLE="$TOOL_DISPLAY ✅"
-        SUBTITLE="Task Complete"
-        MESSAGE="$TOOL_DISPLAY completed the task"
-        VOICE_MESSAGE="$TOOL_DISPLAY completed the task"
+        SUBTITLE="$(t "task_complete")"
+        MESSAGE="$TOOL_DISPLAY $(t "completed_the_task")"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "completed_the_task")"
         SOUND="Glass"
         ;;
     "notification")
         TITLE="$TOOL_DISPLAY 🔔"
-        SUBTITLE="Input Required"
-        MESSAGE="$TOOL_DISPLAY needs your input"
-        VOICE_MESSAGE="$TOOL_DISPLAY needs your input"
+        SUBTITLE="$(t "input_required")"
+        MESSAGE="$TOOL_DISPLAY $(t "needs_your_input")"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "needs_your_input")"
         SOUND="Ping"
         ;;
     "SubagentStart")
         TITLE="$TOOL_DISPLAY 🤖"
-        SUBTITLE="Subagent Started"
-        MESSAGE="$TOOL_DISPLAY started a subagent"
-        VOICE_MESSAGE="$TOOL_DISPLAY started a subagent"
+        SUBTITLE="$(t "subagent_started")"
+        MESSAGE="$TOOL_DISPLAY $(t "started_a_subagent")"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "started_a_subagent")"
         SOUND="Pop"
         ;;
     "SubagentStop")
         TITLE="$TOOL_DISPLAY ✅"
-        SUBTITLE="Subagent Complete"
-        MESSAGE="$TOOL_DISPLAY subagent completed"
-        VOICE_MESSAGE="$TOOL_DISPLAY subagent completed"
+        SUBTITLE="$(t "subagent_complete")"
+        MESSAGE="$TOOL_DISPLAY $(t "subagent_completed")"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "subagent_completed")"
         SOUND="Glass"
         ;;
     "TeammateIdle")
         TITLE="$TOOL_DISPLAY 🔔"
-        SUBTITLE="Teammate Idle"
-        MESSAGE="$TOOL_DISPLAY teammate is waiting for input"
-        VOICE_MESSAGE="$TOOL_DISPLAY teammate is waiting for input"
+        SUBTITLE="$(t "waiting_for_input")"
+        MESSAGE="$TOOL_DISPLAY $(t "teammate_waiting")"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "teammate_waiting")"
         SOUND="Ping"
         ;;
     "TaskCreated")
         TITLE="$TOOL_DISPLAY 📌"
-        SUBTITLE="Task Created"
-        MESSAGE="$TOOL_DISPLAY agent-team task was created"
-        VOICE_MESSAGE="$TOOL_DISPLAY task created"
+        SUBTITLE="$(t "task_created")"
+        MESSAGE="$TOOL_DISPLAY $(t "team_task_created")"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "task_created")"
         SOUND="Pop"
         ;;
     "TaskCompleted")
         TITLE="$TOOL_DISPLAY ✅"
-        SUBTITLE="Task Complete"
-        MESSAGE="$TOOL_DISPLAY agent-team task completed"
-        VOICE_MESSAGE="$TOOL_DISPLAY task completed"
+        SUBTITLE="$(t "team_task_complete")"
+        MESSAGE="$TOOL_DISPLAY $(t "team_task_completed")"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "task_complete")"
         SOUND="Glass"
         ;;
     "error"|"failed")
         TITLE="$TOOL_DISPLAY ❌"
-        SUBTITLE="Error"
-        MESSAGE="An error occurred in $TOOL_DISPLAY"
-        VOICE_MESSAGE="An error occurred in $TOOL_DISPLAY"
+        SUBTITLE="$(t "error")"
+        MESSAGE="$TOOL_DISPLAY $(t "error_occurred")"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "error_occurred")"
         SOUND="Basso"
         ;;
     "test")
         TITLE="Code-Notify Test ✅"
         SUBTITLE="$PROJECT_NAME"
-        MESSAGE="Notifications are working!"
-        VOICE_MESSAGE="Notifications are working"
+        MESSAGE="$(t "notifications_working")"
+        VOICE_MESSAGE="$(t "notifications_working")"
         SOUND="Glass"
         ;;
     "usage")
-        TITLE="${CODE_NOTIFY_USAGE_TITLE:-$TOOL_DISPLAY usage alert}"
-        SUBTITLE="Usage Alert"
-        MESSAGE="${CODE_NOTIFY_USAGE_MESSAGE:-$TOOL_DISPLAY usage changed}"
-        VOICE_MESSAGE="${CODE_NOTIFY_USAGE_VOICE_MESSAGE:-$TOOL_DISPLAY usage alert}"
+        TITLE="${CODE_NOTIFY_USAGE_TITLE:-$TOOL_DISPLAY $(t "usage_alert")}"
+        SUBTITLE="$(t "usage_alert")"
+        MESSAGE="${CODE_NOTIFY_USAGE_MESSAGE:-$TOOL_DISPLAY $(t "usage_changed")}"
+        VOICE_MESSAGE="${CODE_NOTIFY_USAGE_VOICE_MESSAGE:-$TOOL_DISPLAY $(t "usage_alert")}"
         SOUND="Ping"
         ;;
     "usage_reset")
-        TITLE="${CODE_NOTIFY_USAGE_TITLE:-$TOOL_DISPLAY tokens reset}"
-        SUBTITLE="Tokens Reset"
-        MESSAGE="${CODE_NOTIFY_USAGE_MESSAGE:-$TOOL_DISPLAY tokens have reset. Usage is back to 100%.}"
-        VOICE_MESSAGE="${CODE_NOTIFY_USAGE_VOICE_MESSAGE:-$TOOL_DISPLAY tokens have reset}"
+        TITLE="${CODE_NOTIFY_USAGE_TITLE:-$TOOL_DISPLAY $(t "tokens_reset")}"
+        SUBTITLE="$(t "tokens_reset")"
+        MESSAGE="${CODE_NOTIFY_USAGE_MESSAGE:-$TOOL_DISPLAY $(t "tokens_have_reset")}"
+        VOICE_MESSAGE="${CODE_NOTIFY_USAGE_VOICE_MESSAGE:-$TOOL_DISPLAY $(t "tokens_reset")}"
         SOUND="Hero"
         ;;
     "PreToolUse")
@@ -510,7 +511,7 @@ except Exception:
         fi
 
         TITLE="$TOOL_DISPLAY ❓"
-        SUBTITLE="Question"
+        SUBTITLE="$(t "question")"
         if [[ -n "$ASK_QUESTION_TEXT" ]]; then
             MESSAGE=$(printf '%s\n' "$ASK_QUESTION_TEXT" | head -c 150 | tr '\n' ' ')
             MESSAGE="${MESSAGE% }"
@@ -518,16 +519,16 @@ except Exception:
                 MESSAGE="${MESSAGE}..."
             fi
         else
-            MESSAGE="$TOOL_DISPLAY is asking a question"
+            MESSAGE="$TOOL_DISPLAY $(t "is_asking")"
         fi
-        VOICE_MESSAGE="$TOOL_DISPLAY is asking a question"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "is_asking")"
         SOUND="Ping"
         ;;
     *)
         TITLE="$TOOL_DISPLAY 📢"
-        SUBTITLE="Status Update"
+        SUBTITLE="$(t "status_update")"
         MESSAGE="$TOOL_DISPLAY: $HOOK_TYPE"
-        VOICE_MESSAGE="$TOOL_DISPLAY status update"
+        VOICE_MESSAGE="$TOOL_DISPLAY $(t "status_update")"
         SOUND="Pop"
         ;;
 esac
