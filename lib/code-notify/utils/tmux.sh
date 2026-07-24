@@ -613,12 +613,24 @@ TMUX_RESUME_POLL_TTL="${CODE_NOTIFY_TMUX_RESUME_POLL_TTL:-900}"
 # the next hook, whereas a frozen "waiting" badge is the bug this whole path
 # exists to prevent.
 #
-# The default question pattern covers both a tool approval ("Do you want to
-# …?") and plan-mode approval ("Would you like to proceed?"); the selector
-# requirement is what lets the marker set stay this permissive without
-# re-admitting prose false positives. AskUserQuestion needs no coverage here:
-# it pauses via PreToolUse without the watch flag, so it resumes through the
-# tool lifecycle hooks and never reaches this poll.
+# The default question pattern covers a tool approval ("Do you want to
+# …?"), plan-mode approval ("Would you like to proceed?"), Antigravity's
+# file-write approval ("Allow creation of this file?" — anchored like the
+# others but requiring the question mark, since prose opens lines with
+# "Allow" far more often than with "Do you want"), and Antigravity's
+# subagent approval ("research needs approval for Read" — unanchored, the
+# subagent's name precedes it); the selector requirement is what lets the
+# marker set stay this permissive without re-admitting prose false
+# positives. The selector set pairs the numbered Yes/No row with
+# Antigravity's keybinding row ("ctrl+k approve · alt+j manage"), which its
+# subagent dialogs render instead of numbered options. AskUserQuestion
+# needs no coverage here: it pauses via PreToolUse without the watch flag,
+# so it resumes through the tool lifecycle hooks and never reaches this
+# poll.
+#
+# These patterns serve two consumers: the resume poll below (is the pause
+# still unanswered?) and the approval-dialog watch (see
+# TMUX_DIALOG_WATCH_AGENTS), which detects pauses that no hook announced.
 #
 # A residual false positive remains: prose that places a "Do you want …?" line
 # and a "N. Yes"/"N. No" list item in the same visible pane. Its cost is
@@ -631,8 +643,8 @@ TMUX_RESUME_POLL_TTL="${CODE_NOTIFY_TMUX_RESUME_POLL_TTL:-900}"
 # turns detection off entirely; an empty TMUX_DIALOG_OPTIONS falls back to
 # question-only matching). The `-` (not `:-`) expansion makes an explicit
 # empty value stick instead of reverting to the default.
-TMUX_DIALOG_MARKERS="${CODE_NOTIFY_TMUX_DIALOG_MARKERS-^[^A-Za-z]*(Do you want|Would you like)}"
-TMUX_DIALOG_OPTIONS="${CODE_NOTIFY_TMUX_DIALOG_OPTIONS-^[^0-9A-Za-z]*[0-9]+\.[[:space:]]+(Yes|No)([[:space:],.]|$)}"
+TMUX_DIALOG_MARKERS="${CODE_NOTIFY_TMUX_DIALOG_MARKERS-^[^A-Za-z]*(Do you want|Would you like|Allow .*\?)|needs approval for}"
+TMUX_DIALOG_OPTIONS="${CODE_NOTIFY_TMUX_DIALOG_OPTIONS-^[^0-9A-Za-z]*[0-9]+\.[[:space:]]+(Yes|No)([[:space:],.]|$)|ctrl\+k[[:space:]]+approve}"
 # Agents whose running marker additionally gets a settle watch
 # (pipe-separated names as passed by the hooks). Codex finishes /review
 # without emitting any turn-end hook, so its marker would otherwise stand
@@ -659,6 +671,29 @@ TMUX_SETTLE_SECONDS="${CODE_NOTIFY_TMUX_SETTLE_SECONDS:-15}"
 TMUX_IDLE_AGENTS="${CODE_NOTIFY_TMUX_IDLE_AGENTS:-codex|antigravity}"
 # Seconds of post-completion stillness before the nudge. 0 disables.
 TMUX_IDLE_SECONDS="${CODE_NOTIFY_TMUX_IDLE_SECONDS:-60}"
+# Agents whose running marker additionally gets an approval-dialog watch
+# (pipe-separated names as passed by the hooks). Claude Code announces every
+# permission prompt through its Notification hook, but Antigravity's hooks
+# carry no "this call will pause" signal beyond what the PreToolUse banner
+# reconstructs from its permission lists — and that covers run_command and
+# MCP calls only. A file-write approval ("Allow creation of this file?") or
+# a subagent's tool approval ("research needs approval for Read") pauses the
+# turn with no event at all: no toast, and a running indicator that lies.
+# For agents listed here, while the running marker is fresh the agent-exit
+# sweep also captures the recorded pane; once the content has shown an
+# approval dialog (TMUX_DIALOG_MARKERS/TMUX_DIALOG_OPTIONS) across
+# consecutive ticks spanning TMUX_DIALOG_NOTIFY_SECONDS, one synthetic
+# permission_prompt fires through the notifier — the same pipeline a
+# predicted approval banner uses (badge, toast, input pause + resume poll).
+# Claude must not be listed: its native Notification hook already covers
+# every dialog, and a second toast would duplicate it.
+TMUX_DIALOG_WATCH_AGENTS="${CODE_NOTIFY_TMUX_DIALOG_WATCH_AGENTS:-antigravity}"
+# Seconds an unanswered dialog must stay on screen before the synthetic
+# approval alert fires. The check rides the agent-exit poll, so the
+# effective latency is the first tick past this age; an answer landing
+# before that resets the watch silently — the user was already there.
+# 0 disables the watch.
+TMUX_DIALOG_NOTIFY_SECONDS="${CODE_NOTIFY_TMUX_DIALOG_NOTIFY_SECONDS:-5}"
 
 tmux_running_enabled() {
     [[ "${CODE_NOTIFY_TMUX_RUNNING:-}" != "false" ]] && tmux_badge_enabled
@@ -752,6 +787,64 @@ tmux_running_settle_disarm() {
     tmux set-option -wu -t "$window_id" @code_notify_settle_ctx 2>/dev/null
     tmux set-option -wu -t "$window_id" @code_notify_settle_fp 2>/dev/null
     tmux set-option -wu -t "$window_id" @code_notify_settle_since 2>/dev/null
+}
+
+# True when permission_prompt alerts are enabled — same notify-types file and
+# default (idle_prompt only, so approval alerts off) as the notifier's own
+# check. The approval-dialog watch bypasses hook installation, so like the
+# idle nudge it must consult the alert types itself: at arm time to avoid
+# pointless pane captures, and again at delivery so disabling the alert
+# mid-watch still silences an already-armed notification.
+tmux_permission_prompt_enabled() {
+    local types_file="$HOME/.claude/notifications/notify-types"
+    local current="idle_prompt"
+    [[ -f "$types_file" ]] && current="$(cat "$types_file" 2>/dev/null)"
+    [[ "$current" == *permission_prompt* ]]
+}
+
+# Arm (or clear) the approval-dialog watch on a window whose turn just
+# started (see TMUX_DIALOG_WATCH_AGENTS). Records the pane to observe plus
+# the agent/project identity the eventual synthetic notification needs —
+# none of which the sweep process can reconstruct. Project is best-effort
+# the same way the settle context is: hooks run with the agent's working
+# directory as cwd. Agent first, project last, so embedded spaces survive
+# the positional parse.
+#
+# Deliberately not disarmed by stop/pause: the context is only acted on
+# while the running marker is fresh, so it stays armed across an approval
+# pause and its poll-driven resume — Antigravity skips tmux_running_start
+# for the rest of the turn (see agy_maybe_start_running), so a stop-time
+# disarm would blind the watch to every approval after the first — and it
+# simply goes inert when the turn ends. A non-watched agent claiming the
+# window clears the leftover context here, so its dialogs are never watched
+# under a stale identity; the agent-exit cleanup drops it with the rest of
+# the window state.
+tmux_running_dialog_arm() {
+    local window_id="$1" pane_id="$2"
+    local agent="${CODE_NOTIFY_TMUX_AGENT_NAME:-}"
+    local pane_re='^%[0-9]+$'
+    # A fresh turn never inherits the previous turn's sighting epoch.
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
+    if [[ -z "$agent" ]] || [[ "|$TMUX_DIALOG_WATCH_AGENTS|" != *"|$agent|"* ]] ||
+        [[ ! "${TMUX_DIALOG_NOTIFY_SECONDS:-0}" =~ ^[0-9]+$ ]] ||
+        (( TMUX_DIALOG_NOTIFY_SECONDS <= 0 )) ||
+        [[ ! "$pane_id" =~ $pane_re ]] ||
+        ! tmux_permission_prompt_enabled; then
+        tmux set-option -wu -t "$window_id" @code_notify_dialog_ctx 2>/dev/null
+        return 0
+    fi
+    tmux set-option -w -t "$window_id" @code_notify_dialog_ctx \
+        "$pane_id $agent $(basename "$PWD")" 2>/dev/null
+    # The watch rides the agent-exit sweep; make sure it is ticking even
+    # when PID resolution failed and nothing else armed it.
+    tmux_agent_exit_schedule_sweep
+    return 0
+}
+
+tmux_running_dialog_disarm() {
+    local window_id="$1"
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_ctx 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
 }
 
 # True when idle_prompt alerts are enabled — same notify-types file config.sh
@@ -859,6 +952,25 @@ tmux_idle_watch_notify() {
     return 0
 }
 
+# Deliver the synthetic approval alert through the real notifier so it
+# inherits the whole permission_prompt pipeline — the waiting badge, sounds,
+# snooze, the kill switch, and the input pause with its resume poll (which
+# shares the dialog patterns that detected this prompt, so the running
+# indicator comes back once the user answers and the agent repaints).
+# TMUX_PANE targets the watched pane; detached delivery keeps a persistent
+# alert from blocking the sweep tick. CODE_NOTIFY_NOTIFIER_PATH exists for
+# tests to substitute a stub.
+tmux_dialog_watch_notify() {
+    local pane_id="$1" agent="$2" project="$3" notifier
+    tmux_permission_prompt_enabled || return 0
+    notifier="${CODE_NOTIFY_NOTIFIER_PATH:-${TMUX_BADGE_LIB_PATH%/*}/../core/notifier.sh}"
+    [[ -f "$notifier" ]] || return 0
+    ( printf '%s' '{"type":"permission_prompt"}' \
+        | TMUX_PANE="$pane_id" bash "$notifier" notification "$agent" "$project" ) >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    return 0
+}
+
 # Deliver a completion for a turn that ended without its native stop hook
 # (currently Codex /review). The sweep removes the running state first, then
 # calls this synchronously so the normal stop pipeline can apply the 🟢 badge,
@@ -951,10 +1063,18 @@ tmux_agent_exit_schedule_sweep() {
     # behaves as unset).
     q_poll=$(tmux_focus_shell_quote "$TMUX_AGENT_EXIT_POLL_SECONDS")
     local q_settle q_idle q_idle_agents q_notifier
+    local q_dialog_secs q_dialog_agents q_dialog_markers q_dialog_options
     q_settle=$(tmux_focus_shell_quote "$TMUX_SETTLE_SECONDS")
     q_idle=$(tmux_focus_shell_quote "$TMUX_IDLE_SECONDS")
     q_idle_agents=$(tmux_focus_shell_quote "$TMUX_IDLE_AGENTS")
     q_notifier=$(tmux_focus_shell_quote "${CODE_NOTIFY_NOTIFIER_PATH:-}")
+    # The dialog-watch settings ride along too: the fired sweep evaluates
+    # sightings and the dialog patterns itself, so a session that tuned the
+    # threshold or the marker set must keep it across the process boundary.
+    q_dialog_secs=$(tmux_focus_shell_quote "$TMUX_DIALOG_NOTIFY_SECONDS")
+    q_dialog_agents=$(tmux_focus_shell_quote "$TMUX_DIALOG_WATCH_AGENTS")
+    q_dialog_markers=$(tmux_focus_shell_quote "$TMUX_DIALOG_MARKERS")
+    q_dialog_options=$(tmux_focus_shell_quote "$TMUX_DIALOG_OPTIONS")
     inner="cur=\$($q_tmux -S $q_socket show-options -gqv @code_notify_agent_exit_sweep_scheduled 2>/dev/null); "
     inner+="if [ \"\$cur\" != $q_token ]; then exit 0; fi; "
     inner+="$q_tmux -S $q_socket set-option -gu @code_notify_agent_exit_sweep_scheduled; "
@@ -962,6 +1082,10 @@ tmux_agent_exit_schedule_sweep() {
     inner+="CODE_NOTIFY_TMUX_SETTLE_SECONDS=$q_settle "
     inner+="CODE_NOTIFY_TMUX_IDLE_SECONDS=$q_idle CODE_NOTIFY_TMUX_IDLE_AGENTS=$q_idle_agents "
     inner+="CODE_NOTIFY_NOTIFIER_PATH=$q_notifier "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_NOTIFY_SECONDS=$q_dialog_secs "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_WATCH_AGENTS=$q_dialog_agents "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_MARKERS=$q_dialog_markers "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_OPTIONS=$q_dialog_options "
     inner+="bash $q_lib agent-exit-sweep; fi"
     inner="${inner//\#/##}"
     # Claim before arming (see tmux_timer_chain_token); a failed arm rolls
@@ -980,10 +1104,11 @@ tmux_agent_exit_sweep() {
     local fp_now fp_prev settle_since settle_ctx mode transition_lock transition_token
     local current_pid current_since current_settle_since
     local ipane isince ifp1 ifp2 istate iagent iproject
+    local dialog_ctx dialog_since dpane dagent dproject dialog_content
     now=$(date +%s)
     # orig (the badge marker) reads last: it is the only field that may embed
     # "|" (a window name), and read folds any remainder into the final var.
-    while IFS='|' read -r window_id pid since settle_pane idle_watch resume orig; do
+    while IFS='|' read -r window_id pid since settle_pane idle_watch resume dialog_ctx dialog_since orig; do
         [[ "$window_id" =~ ^@[0-9]+$ ]] || continue
         # list-windows emits every window, with empty fields when the options
         # are unset. Windows that are neither PID-tracked nor settle-watched
@@ -1022,6 +1147,7 @@ tmux_agent_exit_sweep() {
                     tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
                     tmux_running_settle_disarm "$window_id"
                     tmux_idle_watch_disarm "$window_id"
+                    tmux_running_dialog_disarm "$window_id"
                     tmux_badge_clear_locked "$window_id"
                     tmux_agent_exit_untrack "$window_id"
                 else
@@ -1070,6 +1196,52 @@ tmux_agent_exit_sweep() {
                 fi
             else
                 tmux_idle_watch_disarm "$window_id"
+            fi
+        fi
+        # Approval-dialog watch (see TMUX_DIALOG_WATCH_AGENTS): while a
+        # watched agent's running marker is fresh, its hooks announced no
+        # pause — yet an approval dialog sitting rendered on the recorded
+        # pane means the agent is in fact blocked on the user (a pause the
+        # PreToolUse banner could not predict: file-write and subagent
+        # approvals appear in no permission list). Record when the dialog
+        # was first seen; once it has stayed on screen across ticks spanning
+        # TMUX_DIALOG_NOTIFY_SECONDS, deliver one synthetic
+        # permission_prompt through the notifier. Its input pause then
+        # removes the running marker, which both gates this branch off (no
+        # re-fire while the same dialog waits) and hands resume detection to
+        # the poll that pause arms. The dialog vanishing before the
+        # threshold means the user was already there — reset silently. Same
+        # observability guards as the settle watch: the recorded pane must
+        # still belong to this window and must actually capture.
+        if [[ -n "$dialog_ctx" ]] && [[ "$since" =~ ^[0-9]+$ ]] &&
+            (( now - since < TMUX_RUNNING_TTL )) &&
+            [[ "${TMUX_DIALOG_NOTIFY_SECONDS:-0}" =~ ^[0-9]+$ ]] &&
+            (( TMUX_DIALOG_NOTIFY_SECONDS > 0 )); then
+            read -r dpane dagent dproject <<< "$dialog_ctx"
+            if [[ "$dpane" =~ ^%[0-9]+$ ]]; then
+                live=1
+                if [[ "$(tmux display-message -p -t "$dpane" '#{window_id}' 2>/dev/null)" == "$window_id" ]] &&
+                    dialog_content=$(tmux capture-pane -p -t "$dpane" 2>/dev/null); then
+                    if [[ "$(tmux_resume_poll_dialog_flag "$dialog_content")" == "1" ]]; then
+                        if [[ ! "$dialog_since" =~ ^[0-9]+$ ]]; then
+                            tmux set-option -w -t "$window_id" \
+                                @code_notify_dialog_since "$now" 2>/dev/null
+                        elif (( now - dialog_since >= TMUX_DIALOG_NOTIFY_SECONDS )); then
+                            tmux set-option -wu -t "$window_id" \
+                                @code_notify_dialog_since 2>/dev/null
+                            # A turn transition between the snapshot and now
+                            # owns the window's state; a stale sighting must
+                            # not toast over it.
+                            current_since=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
+                            if [[ "$current_since" == "$since" ]]; then
+                                tmux_dialog_watch_notify "$dpane" "$dagent" "$dproject"
+                            fi
+                        fi
+                    elif [[ -n "$dialog_since" ]]; then
+                        tmux set-option -wu -t "$window_id" \
+                            @code_notify_dialog_since 2>/dev/null
+                    fi
+                fi
             fi
         fi
         # Settle watch (see TMUX_SETTLE_AGENTS): while a watched agent's
@@ -1145,7 +1317,7 @@ tmux_agent_exit_sweep() {
             tmux set-option -w -t "$window_id" @code_notify_agent_pid "$pid" 2>/dev/null
         fi
     done < <(tmux list-windows -a -F \
-        '#{window_id}|#{@code_notify_agent_pid}|#{@code_notify_running}|#{@code_notify_settle_pane}|#{@code_notify_idle_watch}|#{@code_notify_resume_pending}|#{@code_notify_orig_name}' 2>/dev/null)
+        '#{window_id}|#{@code_notify_agent_pid}|#{@code_notify_running}|#{@code_notify_settle_pane}|#{@code_notify_idle_watch}|#{@code_notify_resume_pending}|#{@code_notify_dialog_ctx}|#{@code_notify_dialog_since}|#{@code_notify_orig_name}' 2>/dev/null)
     if [[ "$live" -eq 1 ]]; then
         tmux_agent_exit_schedule_sweep
     fi
@@ -1373,6 +1545,7 @@ tmux_running_start() {
     tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
     tmux_idle_watch_disarm "$window_id"
     tmux_running_settle_arm "$window_id" "$pane_id"
+    tmux_running_dialog_arm "$window_id" "$pane_id"
     if (( spinner )); then
         tmux_agent_exit_track "$window_id"
         tmux_spinner_arm
@@ -1694,6 +1867,7 @@ tmux_prompt_submit() {
     tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
     tmux_idle_watch_disarm "$window_id"
     tmux_running_settle_arm "$window_id" "$TMUX_PANE"
+    tmux_running_dialog_arm "$window_id" "$TMUX_PANE"
     if (( spinner )); then
         # Arm the snippet (a show-options no-op when already armed).
         tmux_agent_exit_track "$window_id"
@@ -1922,6 +2096,11 @@ tmux_running_resume_window() {
     tmux_resume_flag_clear "$window_id"
     tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
     tmux_idle_watch_disarm "$window_id"
+    # The dialog watch's context survives the pause (see
+    # tmux_running_dialog_arm), but a sighting epoch recorded before it must
+    # not carry into the resumed turn — a later dialog would fire without
+    # its confirmation tick.
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
     if (( spinner )); then
         tmux_spinner_arm
     elif tmux_badge_enabled; then

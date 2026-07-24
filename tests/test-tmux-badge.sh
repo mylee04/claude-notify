@@ -147,8 +147,10 @@ case "$cmd" in
                 sp=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_settle_pane" 2>/dev/null)
                 iw=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_idle_watch" 2>/dev/null)
                 rp=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_resume_pending" 2>/dev/null)
+                dc=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_dialog_ctx" 2>/dev/null)
+                ds=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_dialog_since" 2>/dev/null)
                 on=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_orig_name" 2>/dev/null)
-                printf '%s|%s|%s|%s|%s|%s|%s\n' "$w" "$pid" "$run" "$sp" "$iw" "$rp" "$on"
+                printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$w" "$pid" "$run" "$sp" "$iw" "$rp" "$dc" "$ds" "$on"
             done
         elif [[ "$fmt" == *resume_pending* ]]; then
             # The resume poll pairs each pending epoch with the window's
@@ -1147,6 +1149,25 @@ plan_dialog=$'Would you like to proceed?\n ❯ 1. Yes, and auto-accept edits\n  
 # A stray numbered Yes/No item alone (a prose list) is not a dialog either.
 [[ "$(tmux_resume_poll_dialog_flag "$(printf 'Here are the options:\n1. Yes\n2. No')")" == "0" ]] \
     || fail "a Yes/No list with no question line must not match"
+# Antigravity's file-write approval: an "Allow …?" question over the same
+# numbered Yes/No selector chrome.
+agy_file_dialog=$'Allow creation of this file?\n> 1. Yes, allow creation\n  2. No, deny creation'
+[[ "$(tmux_resume_poll_dialog_flag "$agy_file_dialog")" == "1" ]] \
+    || fail "the default should match Antigravity's file-write approval"
+# Antigravity's subagent approval renders no question mark and no numbered
+# options — an unanchored "needs approval for" line paired with its
+# keybinding row is the equivalent question + selector pair.
+agy_subagent_dialog=$'research needs approval for Read\n\nctrl+k approve · alt+j manage'
+[[ "$(tmux_resume_poll_dialog_flag "$agy_subagent_dialog")" == "1" ]] \
+    || fail "the default should match Antigravity's subagent approval"
+# "Allow" opens prose lines far more often than "Do you want": without the
+# question mark (or with one but no selector) it must not read as a dialog.
+[[ "$(tmux_resume_poll_dialog_flag "Allow me to explain the approach first.")" == "0" ]] \
+    || fail "line-leading Allow prose without a question mark must not match"
+[[ "$(tmux_resume_poll_dialog_flag "Allow overwriting this file? I would not recommend it.")" == "0" ]] \
+    || fail "an Allow question with no selector must not match"
+[[ "$(tmux_resume_poll_dialog_flag "The setting needs approval for deployment to work.")" == "0" ]] \
+    || fail "prose containing 'needs approval for' with no selector must not match"
 TMUX_DIALOG_OPTIONS=""
 [[ "$(tmux_resume_poll_dialog_flag "Do you want to proceed?")" == "1" ]] \
     || fail "an empty options pattern should fall back to question-only matching"
@@ -1732,6 +1753,97 @@ CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/notifier-stub" tmux_agent_exit_sweep \
 sleep 0.3
 [[ ! -s "$idle_notify_log" ]] || fail "a vanished pane must not notify"
 pass "vanished pane disarms the idle watch silently"
+
+# --- approval-dialog watch: arm gating (agent list, alert type) ---
+# Antigravity's hooks announce no pause for file-write or subagent approvals,
+# so its running start arms a dialog watch; Claude's native Notification hook
+# covers every dialog, so claiming the window must clear a leftover context
+# instead of watching under a stale identity. The synthetic alert is the
+# permission_prompt type, so the arm honours the notify-types file.
+mkdir -p "$HOME/.claude/notifications"
+printf '%s' "idle_prompt|permission_prompt" > "$HOME/.claude/notifications/notify-types"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_start \
+    || fail "antigravity running-start should succeed"
+dc="$(cat "$state_dir/@2.@code_notify_dialog_ctx" 2>/dev/null)"
+[[ "$dc" == "%3 antigravity $(basename "$PWD")" ]] \
+    || fail "antigravity running-start should arm the dialog watch (got: $dc)"
+tmux_running_stop || fail "running-stop after dialog arm should succeed"
+[[ -f "$state_dir/@2.@code_notify_dialog_ctx" ]] \
+    || fail "the dialog context must survive a stop (agy skips running-start after a pause)"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_dialog_ctx" ]] \
+    || fail "claude claiming the window must clear the leftover dialog context"
+tmux_running_stop || fail "running-stop after claude prompt should succeed"
+printf '%s' "idle_prompt" > "$HOME/.claude/notifications/notify-types"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_start \
+    || fail "running-start with permission_prompt disabled should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_dialog_ctx" ]] \
+    || fail "a disabled permission_prompt alert type must not arm the dialog watch"
+tmux_running_stop || fail "running-stop after the disabled-arm check should succeed"
+pass "dialog watch arms for antigravity only, gated on alert type"
+
+# --- approval-dialog watch: sweep fires one synthetic permission_prompt ---
+# The first sighting only records the epoch; stillness of the dialog past the
+# threshold fires the synthetic alert once, with the watched pane in
+# TMUX_PANE and the recorded identity in argv, then consumes the sighting.
+printf '%s' "idle_prompt|permission_prompt" > "$HOME/.claude/notifications/notify-types"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_start \
+    || fail "antigravity running-start for the sweep tests should succeed"
+printf '%s' "$agy_file_dialog" > "$state_dir/%3.pane_content"
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+: > "$log_file"
+: > "$idle_notify_log"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/notifier-stub" tmux_agent_exit_sweep \
+    || fail "first dialog sighting sweep should succeed"
+[[ -f "$state_dir/@2.@code_notify_dialog_since" ]] \
+    || fail "the first sighting should record its epoch"
+sleep 0.3
+[[ ! -s "$idle_notify_log" ]] || fail "the first sighting must not notify"
+grep -q "^run-shell -b -d 5 " "$log_file" \
+    || fail "an active dialog watch should keep the sweep chain alive"
+printf '%s' "$(( $(date +%s) - TMUX_DIALOG_NOTIFY_SECONDS - 1 ))" \
+    > "$state_dir/@2.@code_notify_dialog_since"
+: > "$idle_notify_log"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/notifier-stub" tmux_agent_exit_sweep \
+    || fail "dialog-firing sweep should succeed"
+wait_for_idle_log || fail "a dialog past the threshold should invoke the notifier"
+[[ "$(cat "$idle_notify_log")" == '%3|notification|antigravity|'"$(basename "$PWD")"'|{"type":"permission_prompt"}' ]] \
+    || fail "the synthetic approval should carry pane, event, agent, project and payload (got: $(cat "$idle_notify_log"))"
+[[ ! -f "$state_dir/@2.@code_notify_dialog_since" ]] \
+    || fail "the fired sighting epoch should be consumed"
+pass "dialog on screen past the threshold fires the synthetic approval once"
+
+# --- approval-dialog watch: an answer before the threshold resets silently ---
+printf '%s' "$(date +%s)" > "$state_dir/@2.@code_notify_dialog_since"
+printf '%s' "generating code ..." > "$state_dir/%3.pane_content"
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+: > "$idle_notify_log"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/notifier-stub" tmux_agent_exit_sweep \
+    || fail "sweep after an early answer should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_dialog_since" ]] \
+    || fail "an answered dialog should reset the sighting epoch"
+sleep 0.3
+[[ ! -s "$idle_notify_log" ]] || fail "an answered dialog must not notify"
+pass "dialog answered before the threshold resets the watch silently"
+
+# --- approval-dialog watch: no running marker means no sighting ---
+# After the synthetic alert's own pause (or any stop), the marker is gone;
+# the same waiting dialog must not re-fire on later ticks.
+printf '%s' "$agy_file_dialog" > "$state_dir/%3.pane_content"
+tmux_running_stop || fail "running-stop before the paused-window check should succeed"
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+: > "$idle_notify_log"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/notifier-stub" tmux_agent_exit_sweep \
+    || fail "sweep on a paused window should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_dialog_since" ]] \
+    || fail "a window without a fresh running marker must not track sightings"
+sleep 0.3
+[[ ! -s "$idle_notify_log" ]] || fail "a paused window must not re-notify for the same dialog"
+rm -f "$state_dir/%3.pane_content" "$state_dir/@2.@code_notify_dialog_ctx" \
+    "$HOME/.claude/notifications/notify-types" \
+    "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+pass "dialog watch goes inert once the running marker is down"
 
 # --- REGRESSION: raced duplicate sweep chains collapse instead of persisting ---
 # Two hook processes can both read an empty pending flag and both register a
