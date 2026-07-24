@@ -254,6 +254,13 @@ else
     test_fail "tts cache project separation failed"
 fi
 
+test_start "voice cache project scoping"
+if run_test_script tests/test-voice-cache-project.sh; then
+    test_pass
+else
+    test_fail "voice cache project scoping failed"
+fi
+
 test_start "speech queue"
 if run_test_script tests/test-speech-queue.sh; then
     test_pass

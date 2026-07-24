@@ -223,8 +223,19 @@ tts_cache_project_slug() {
 
 tts_cache_path() {
     local key="$1"
+    local project="${2:-}"
     local project_slug
-    project_slug="$(tts_cache_project_slug "${2:-}")"
+
+    # No project means the phrase does not name one either (voice project
+    # wording off, or `cn voice elevenlabs test`), so the entry is shared
+    # across projects and its filename carries no project segment — labelling
+    # it with whichever project happened to synthesize it first would be a lie.
+    if [[ -z "$project" ]]; then
+        printf '%s/tts-%s.mp3\n' "$TTS_CACHE_DIR" "$key"
+        return 0
+    fi
+
+    project_slug="$(tts_cache_project_slug "$project")"
     printf '%s/tts-%s-%s.mp3\n' "$TTS_CACHE_DIR" "$project_slug" "$key"
 }
 
@@ -769,7 +780,10 @@ speech_log() {
 
 # Public entry point for notifier.sh. $1 = message, $2 = system voice for the
 # `say` fallback used when ElevenLabs is unselected or fails, $3 = project
-# name used to separate cache entries and make their filenames identifiable.
+# name, passed ONLY when the spoken message names that project (it separates
+# the cache entries and makes their filenames identifiable). Callers whose
+# message is project-agnostic must pass nothing, so one cache entry — one
+# synthesis — serves every project.
 # With the speech queue enabled, concurrent callers speak one at a time.
 speak_notification() {
     local message="$1"

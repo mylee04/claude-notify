@@ -2278,6 +2278,10 @@ esac
 # Project context is already carried in the notification subtitle and channel
 # metadata. Speak it as well, so identical events from different worktrees are
 # distinguishable without looking at the banner.
+# VOICE_PROJECT scopes the TTS cache and is set only when the spoken message
+# actually names the project: an unnamed project must not fragment the cache,
+# or the same audio is synthesized (and paid for) once per worktree.
+VOICE_PROJECT=""
 if [[ -n "$PROJECT_NAME" ]] && [[ "$HOOK_TYPE" != "test" ]] &&
     project_wording_enabled voice; then
     # "in project X" flows as one sentence — a ". Project X" suffix reads as
@@ -2286,6 +2290,7 @@ if [[ -n "$PROJECT_NAME" ]] && [[ "$HOOK_TYPE" != "test" ]] &&
     # ("in project code <pause> notify"), while hyphens read as one compound;
     # underscores become hyphens so no voice verbalizes "underscore".
     VOICE_MESSAGE="${VOICE_MESSAGE} in project ${PROJECT_NAME//_/-}"
+    VOICE_PROJECT="$PROJECT_NAME"
 fi
 
 # Add project name to subtitle if available
@@ -2603,7 +2608,7 @@ case "$OS" in
             if should_speak; then
                 VOICE=$(get_voice_setting)
                 if [[ -n "$VOICE" ]]; then
-                    speak_notification "$VOICE_MESSAGE" "$VOICE" "$PROJECT_NAME"
+                    speak_notification "$VOICE_MESSAGE" "$VOICE" "$VOICE_PROJECT"
                 fi
             fi
         ) > /dev/null 2>&1 &
