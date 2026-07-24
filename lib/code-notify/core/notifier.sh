@@ -1641,8 +1641,11 @@ should_suppress_notification() {
         return 0
     fi
 
-    # Rate limit stop notifications to prevent spam from parallel sub-agents
-    if [[ "$HOOK_TYPE" == "stop" ]]; then
+    # Rate limit stop notifications to prevent spam from parallel sub-agents.
+    # Badge-only runs are exempt: they never toast, and the completion that
+    # preceded them stamped this very key — limiting here would silently drop
+    # the badge reconcile they exist to deliver.
+    if [[ "$HOOK_TYPE" == "stop" ]] && [[ "${CODE_NOTIFY_BADGE_ONLY:-}" != "1" ]]; then
         if is_rate_limited "last_stop_notification" "$STOP_RATE_LIMIT_SECONDS"; then
             return 0  # Suppress - too soon since last notification
         fi
@@ -1890,8 +1893,10 @@ if [[ "$HOOK_TYPE" == "stop" ]] || [[ "$HOOK_TYPE" == "notification" ]] || [[ "$
     fi
 fi
 
-# Update rate limit timestamp for stop notifications
-if [[ "$HOOK_TYPE" == "stop" ]]; then
+# Update rate limit timestamp for stop notifications. A badge-only run sends
+# no toast, so it must not stamp the key either — that could swallow the next
+# real completion's alert.
+if [[ "$HOOK_TYPE" == "stop" ]] && [[ "${CODE_NOTIFY_BADGE_ONLY:-}" != "1" ]]; then
     update_rate_limit "last_stop_notification"
 elif [[ "$HOOK_TYPE" == "notification" ]]; then
     if should_rate_limit_notification_subtype "$NOTIFICATION_SUBTYPE"; then
@@ -2567,6 +2572,16 @@ if [[ -n "$BADGE_ICON" ]] && [[ "${TMUX_RUNNING_STOP_PRESERVED:-0}" != "1" ]]; t
         tmux_badge_set \
             "$BADGE_ICON" "$BADGE_CLEAR_MODE" "" "$BADGE_VISIBLE_ACTION" 2>/dev/null || true
     fi
+fi
+
+# A badge-only run ends at the badge. The settle reconcile of a preserved
+# Stop (tmux_settle_watch_notify with CODE_NOTIFY_BADGE_ONLY=1) synthesizes a
+# stop whose toast, sound, voice and channel delivery already went out with
+# the Stop that kept the marker — only the terminal badge (above) and the
+# idle watch (armed before the suppression check) were withheld. Skipping the
+# log line too keeps notifications.log one-line-per-alert for diagnostics.
+if [[ "${CODE_NOTIFY_BADGE_ONLY:-}" == "1" ]]; then
+    exit 0
 fi
 
 # Send notification based on OS

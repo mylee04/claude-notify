@@ -756,14 +756,28 @@ tmux_agent_exit_track() {
 # end a turn without any hook. Stores the pane to observe; the snapshot
 # bookkeeping (@code_notify_settle_fp/_since) is reset so a fresh turn never
 # inherits the previous turn's settle countdown.
+#
+# Pass "force" as $3 to arm regardless of TMUX_SETTLE_AGENTS. The queued-prompt
+# preserve (tmux_running_stop) uses it to verify a consumed hint really had a
+# successor turn — that check must cover any agent, including ones with real
+# Stop hooks, not just the no-stop agents the allowlist targets. A force arm
+# also marks the watch badge-only: the preserving Stop already delivered its
+# completion toast/sound/voice (only the terminal badge was withheld with the
+# marker), so the reconcile must not notify again — unlike the allowlist case,
+# where the turn ended with no hook and the synthetic run is the only alert.
 tmux_running_settle_arm() {
-    local window_id="$1" pane_id="$2"
+    local window_id="$1" pane_id="$2" force="${3:-}"
     local agent="${CODE_NOTIFY_TMUX_AGENT_NAME:-}"
     [[ -n "$agent" ]] || return 0
-    [[ "|$TMUX_SETTLE_AGENTS|" == *"|$agent|"* ]] || return 0
+    [[ "$force" == "force" ]] || [[ "|$TMUX_SETTLE_AGENTS|" == *"|$agent|"* ]] || return 0
     local pane_re='^%[0-9]+$'
     [[ "$pane_id" =~ $pane_re ]] || return 0
     tmux set-option -w -t "$window_id" @code_notify_settle_pane "$pane_id" 2>/dev/null
+    if [[ "$force" == "force" ]]; then
+        tmux set-option -w -t "$window_id" @code_notify_settle_badge_only 1 2>/dev/null
+    else
+        tmux set-option -wu -t "$window_id" @code_notify_settle_badge_only 2>/dev/null
+    fi
     # The settle stop synthesizes the missing completion through the notifier,
     # which also arms the post-completion idle watch. Both paths need an agent
     # and project the sweep process cannot reconstruct — record them now, while
@@ -787,6 +801,7 @@ tmux_running_settle_disarm() {
     tmux set-option -wu -t "$window_id" @code_notify_settle_ctx 2>/dev/null
     tmux set-option -wu -t "$window_id" @code_notify_settle_fp 2>/dev/null
     tmux set-option -wu -t "$window_id" @code_notify_settle_since 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_settle_badge_only 2>/dev/null
 }
 
 # True when permission_prompt alerts are enabled — same notify-types file and
@@ -977,12 +992,22 @@ tmux_dialog_watch_notify() {
 # send the completion toast, and arm the later idle reminder before the sweep
 # decides whether another tick is needed. TMUX_PANE restores the originating
 # context because a tmux run-shell timer has no pane of its own.
+#
+# Pass "1" as $4 when the watch was badge-only (a queued-prompt preserve, see
+# tmux_running_settle_arm): that turn's Stop already delivered the toast, so
+# the synthetic run applies only the badge and idle watch it withheld.
 tmux_settle_watch_notify() {
-    local pane_id="$1" agent="$2" project="$3" notifier
+    local pane_id="$1" agent="$2" project="$3" badge_only="${4:-}" notifier
     notifier="${CODE_NOTIFY_NOTIFIER_PATH:-${TMUX_BADGE_LIB_PATH%/*}/../core/notifier.sh}"
     [[ -f "$notifier" ]] || return 1
-    CODE_NOTIFY_TMUX_STOP_ALREADY_APPLIED=1 TMUX_PANE="$pane_id" \
-        bash "$notifier" stop "$agent" "$project" >/dev/null 2>&1
+    if [[ "$badge_only" == "1" ]]; then
+        CODE_NOTIFY_BADGE_ONLY=1 CODE_NOTIFY_TMUX_STOP_ALREADY_APPLIED=1 \
+            TMUX_PANE="$pane_id" \
+            bash "$notifier" stop "$agent" "$project" >/dev/null 2>&1
+    else
+        CODE_NOTIFY_TMUX_STOP_ALREADY_APPLIED=1 TMUX_PANE="$pane_id" \
+            bash "$notifier" stop "$agent" "$project" >/dev/null 2>&1
+    fi
 }
 
 # Ownership token for the repeating one-shot timer chains below. Each
@@ -1101,7 +1126,7 @@ tmux_agent_exit_schedule_sweep() {
 tmux_agent_exit_sweep() {
     { [[ -n "${TMUX:-}" ]] && command -v tmux &> /dev/null; } || return 0
     local now window_id pid since settle_pane idle_watch resume orig live=0
-    local fp_now fp_prev settle_since settle_ctx mode transition_lock transition_token
+    local fp_now fp_prev settle_since settle_ctx settle_badge_only mode transition_lock transition_token
     local current_pid current_since current_settle_since
     local ipane isince ifp1 ifp2 istate iagent iproject
     local dialog_ctx dialog_since dpane dagent dproject dialog_content
@@ -1290,6 +1315,7 @@ tmux_agent_exit_sweep() {
             continue
         fi
         settle_ctx=$(tmux show-options -wqv -t "$window_id" @code_notify_settle_ctx 2>/dev/null)
+        settle_badge_only=$(tmux show-options -wqv -t "$window_id" @code_notify_settle_badge_only 2>/dev/null)
         tmux set-option -wu -t "$window_id" @code_notify_running 2>/dev/null
         tmux_running_settle_disarm "$window_id"
         mode=$(tmux show-options -wqv -t "$window_id" @code_notify_clear_mode 2>/dev/null)
@@ -1304,7 +1330,7 @@ tmux_agent_exit_sweep() {
         # hook-less review does not remain silently unattended forever.
         if [[ -n "$settle_ctx" ]]; then
             read -r iagent iproject <<< "$settle_ctx"
-            if ! tmux_settle_watch_notify "$settle_pane" "$iagent" "$iproject"; then
+            if ! tmux_settle_watch_notify "$settle_pane" "$iagent" "$iproject" "$settle_badge_only"; then
                 tmux_idle_watch_arm "$iagent" "$iproject" "$window_id" "$settle_pane"
             fi
             live=1
@@ -1840,8 +1866,10 @@ tmux_prompt_submit() {
     # UserPromptSubmit re-lights it (tool hooks are resume-gated). Leave a
     # hint for that Stop to consume so the successor turn keeps its
     # indicator. A marker lingering from an interrupted turn (Esc emits no
-    # Stop) sets a false hint; its cost is one indicator kept ~a minute
-    # longer, until the native idle reminder pauses it.
+    # Stop) sets a false hint, whose consuming Stop would otherwise strand the
+    # indicator; tmux_running_stop arms a settle watch on that preserve so the
+    # sweep reconciles it once the pane proves idle, rather than waiting on the
+    # native idle reminder or the TTL.
     local prev_running now_epoch
     now_epoch="$(date +%s)"
     prev_running=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
@@ -1917,6 +1945,24 @@ tmux_running_stop() {
             if (( now_queued - queued < TMUX_RUNNING_TTL )); then
                 # shellcheck disable=SC2034  # out-param read by notifier.sh
                 TMUX_RUNNING_STOP_PRESERVED=1
+                # The hint bets a successor turn is (or is about to be) running,
+                # so keep the indicator. That bet is wrong for a FALSE hint: a
+                # marker lingering from an interrupted turn (Esc/Ctrl-C emit no
+                # Stop) makes the next prompt's UserPromptSubmit set a hint that
+                # this same turn's only Stop then consumes, stranding the
+                # indicator until idle_prompt (~a minute, and only if enabled)
+                # or the 4h TTL. Arm a settle watch as the safety net: if the
+                # pane holds still — no successor is actually running — the
+                # agent-exit sweep retires the marker and applies the terminal
+                # badge this Stop withheld. Badge only: the toast, sound and
+                # voice already went out with this Stop (the preserve gates
+                # nothing but the badge), so the reconcile must not deliver
+                # the completion a second time. A genuine successor keeps
+                # repainting (Claude/Codex animate an elapsed counter while
+                # working) so the watch never fires, and that turn's own Stop
+                # disarms it. Force past TMUX_SETTLE_AGENTS: this verifies any
+                # agent's preserve, not just the no-stop ones.
+                tmux_running_settle_arm "$window_id" "$pane_id" force
                 tmux_running_transition_lock_release "$transition_lock" "$transition_token"
                 return 0
             fi

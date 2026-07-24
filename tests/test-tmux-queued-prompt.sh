@@ -223,4 +223,66 @@ run_lib tmux_badge_set_unless_running "DONE" engage "" apply
 [[ "$(opt @code_notify_clear_mode)" == "running" ]] \
     || fail "late terminal delivery must not overwrite a fresh running badge"
 
+# 12. Safety net for a FALSE hint: a marker lingering from an interrupted turn
+#     (Esc emits no Stop) makes the next prompt set a hint that the SAME turn's
+#     only Stop consumes, which would strand the indicator with no successor to
+#     clear it. The preserving Stop must arm a settle watch — for any agent,
+#     even one with real Stop hooks — recording the pane and agent/project the
+#     sweep needs to reconcile the marker and apply the withheld badge.
+rm -f "$state_dir"/@1.@code_notify_running \
+    "$state_dir"/@1.@code_notify_queued_prompt \
+    "$state_dir"/@1.@code_notify_settle_pane \
+    "$state_dir"/@1.@code_notify_settle_ctx
+export CODE_NOTIFY_TMUX_AGENT_NAME=claude
+run_lib tmux_prompt_submit
+run_lib tmux_prompt_submit
+[[ -n "$(opt @code_notify_queued_prompt)" ]] || fail "precondition: submit over a live marker leaves a hint"
+run_lib tmux_running_stop consume-queued-prompt
+[[ -n "$(opt @code_notify_running)" ]] || fail "preserve must keep the running marker"
+[[ "$(opt @code_notify_settle_pane)" == "%1" ]] \
+    || fail "a preserved hint must arm the settle safety-net watch"
+[[ "$(opt @code_notify_settle_ctx)" == "claude "* ]] \
+    || fail "the settle watch must record the agent/project for the synthetic completion"
+# The preserving Stop already delivered its toast (only the badge was
+# withheld), so the safety-net watch must be marked badge-only — the
+# reconcile applies badge and idle watch without a second notification.
+[[ "$(opt @code_notify_settle_badge_only)" == "1" ]] \
+    || fail "a preserve-armed settle watch must be marked badge-only"
+# The genuine successor's own Stop clears the marker and disarms the safety net.
+run_lib tmux_running_stop consume-queued-prompt
+[[ -z "$(opt @code_notify_running)" ]] || fail "successor stop should clear the marker"
+[[ -z "$(opt @code_notify_settle_pane)" ]] || fail "successor stop should disarm the settle watch"
+[[ -z "$(opt @code_notify_settle_badge_only)" ]] \
+    || fail "successor stop should clear the badge-only marker"
+unset CODE_NOTIFY_TMUX_AGENT_NAME
+
+# 13. A badge-only synthetic stop (the settle reconcile of a preserved Stop)
+#     must skip desktop delivery and leave the stop rate limiter unstamped —
+#     the preserving Stop already toasted, and a stamp here could swallow the
+#     next real completion's alert. Control run first so an empty delivery
+#     log proves suppression rather than broken recording fakes.
+deliver_log="$test_dir/deliver.log"
+for tool in terminal-notifier osascript notify-send; do
+    printf '#!/bin/bash\necho "%s" >> "%s"\nexit 0\n' "$tool" "$deliver_log" \
+        > "$fake_bin/$tool"
+    chmod +x "$fake_bin/$tool"
+done
+stop_stamp="$HOME/.claude/notifications/state/last_stop_notification"
+rm -f "$stop_stamp"
+printf '%s\n' '{"session_id":"sess1","stop_hook_active":false}' | \
+    CODE_NOTIFY_STOP_RATE_LIMIT_SECONDS=0 CODE_NOTIFY_TAIL_SYNC=1 \
+    CODE_NOTIFY_SKIP_USAGE_CHECK=1 FAKE_TMUX_STATE="$state_dir" \
+    bash "$ROOT_DIR/lib/code-notify/core/notifier.sh" stop claude proj >/dev/null 2>&1 || true
+[[ -s "$deliver_log" ]] || fail "control stop should reach desktop delivery"
+[[ -f "$stop_stamp" ]] || fail "control stop should stamp the rate limiter"
+rm -f "$stop_stamp"
+: > "$deliver_log"
+printf '%s\n' '{"session_id":"sess1","stop_hook_active":false}' | \
+    CODE_NOTIFY_BADGE_ONLY=1 CODE_NOTIFY_TMUX_STOP_ALREADY_APPLIED=1 \
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+    FAKE_TMUX_STATE="$state_dir" \
+    bash "$ROOT_DIR/lib/code-notify/core/notifier.sh" stop claude proj >/dev/null 2>&1 || true
+[[ ! -s "$deliver_log" ]] || fail "a badge-only stop must not deliver a desktop notification"
+[[ ! -f "$stop_stamp" ]] || fail "a badge-only stop must not stamp the stop rate limiter"
+
 pass "queued prompt submissions keep the running indicator across the racing stop"

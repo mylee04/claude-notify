@@ -1500,11 +1500,12 @@ cat > "$fake_bin/settle-notifier-stub" <<EOF
 #!/bin/bash
 running=0
 [[ -f "$state_dir/@2.@code_notify_running" ]] && running=1
-printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
     "\$TMUX_PANE" "\$1" "\$2" "\$3" \
     "\${CODE_NOTIFY_TMUX_IDLE_AGENTS:-}" \
     "\$(cat "$state_dir/@2.window_name" 2>/dev/null)" "\$running" \
     "\${CODE_NOTIFY_TMUX_STOP_ALREADY_APPLIED:-}" \
+    "\${CODE_NOTIFY_BADGE_ONLY:-}" \
     >> "$settle_notify_log"
 EOF
 chmod +x "$fake_bin/settle-notifier-stub"
@@ -1541,8 +1542,8 @@ CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" \
     || fail "the settle stop should restore the window name (got: $(window_name))"
 [[ ! -f "$state_dir/@2.@code_notify_settle_pane" ]] \
     || fail "the settle stop should disarm the watch"
-[[ "$(cat "$settle_notify_log")" == "%3|stop|codex|"*"|zsh|0|1" ]] \
-    || fail "settle should invoke stop only after clearing the running rendering (got: $(cat "$settle_notify_log"))"
+[[ "$(cat "$settle_notify_log")" == "%3|stop|codex|"*"|zsh|0|1|" ]] \
+    || fail "settle should invoke stop only after clearing the running rendering, with full delivery (got: $(cat "$settle_notify_log"))"
 [[ "$(cat "$state_dir/@2.@code_notify_agent_pid" 2>/dev/null)" == "$$" ]] \
     || fail "the settle completion must keep the exit tracking for its badge"
 rm -f "$state_dir/%3.pane_content" "$state_dir/@2.@code_notify_agent_pid"
@@ -1601,7 +1602,7 @@ settle_handoff_round() {
     env -u TMUX_PANE /bin/sh -c "$payload"
 }
 settle_handoff_round "" || fail "default-allowlist handoff round should run cleanly"
-[[ "$(cat "$settle_notify_log")" == *"|codex|antigravity|zsh|0|1" ]] \
+[[ "$(cat "$settle_notify_log")" == *"|codex|antigravity|zsh|0|1|" ]] \
     || fail "scheduled completion should inherit the default idle allowlist (got: $(cat "$settle_notify_log"))"
 rm -f "$state_dir/%3.pane_content" \
     "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
@@ -1610,7 +1611,7 @@ settle_handoff_round "antigravity" || fail "override-allowlist handoff round sho
     || fail "the scheduled payload should carry the session's allowlist"
 [[ ! -f "$state_dir/@2.@code_notify_running" ]] \
     || fail "the scheduled settle stop should still retire the running marker"
-[[ "$(cat "$settle_notify_log")" == *"|antigravity|zsh|0|1" ]] \
+[[ "$(cat "$settle_notify_log")" == *"|antigravity|zsh|0|1|" ]] \
     || fail "synthetic completion should receive the overridden idle allowlist (got: $(cat "$settle_notify_log"))"
 rm -f "$state_dir/%3.pane_content" "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
 printf '%s' "zsh" > "$state_dir/@2.window_name"
@@ -1844,6 +1845,69 @@ rm -f "$state_dir/%3.pane_content" "$state_dir/@2.@code_notify_dialog_ctx" \
     "$HOME/.claude/notifications/notify-types" \
     "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
 pass "dialog watch goes inert once the running marker is down"
+
+# --- a preserved queued-prompt hint self-heals when no successor runs ---
+# A FALSE hint (a marker lingering from an interrupted turn, which emits no
+# Stop) makes a claude turn's only Stop consume the hint and preserve the
+# marker, with no successor to clear it. The preserve arms a settle watch even
+# though claude is not a TMUX_SETTLE_AGENT; once the pane proves idle the
+# sweep retires the marker and applies the badge the preserve withheld. The
+# reconcile must be badge-only (CODE_NOTIFY_BADGE_ONLY=1): the preserving
+# Stop already delivered the completion toast — only the badge was gated —
+# unlike the codex sections above, where no Stop fired at all and the
+# synthetic run is the only notification.
+for opt_name in @code_notify_running @code_notify_queued_prompt \
+    @code_notify_settle_pane @code_notify_settle_ctx @code_notify_settle_fp \
+    @code_notify_settle_since @code_notify_idle_watch @code_notify_clear_mode \
+    @code_notify_orig_name @code_notify_badged_name @code_notify_autorename \
+    @code_notify_agent_pid; do
+    rm -f "$state_dir/@2.$opt_name"
+done
+printf '%s' "zsh" > "$state_dir/@2.window_name"
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the preserve flow should succeed"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "second claude prompt-submit (queued) should succeed"
+[[ -f "$state_dir/@2.@code_notify_queued_prompt" ]] \
+    || fail "precondition: a submission over a live marker leaves a hint"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_running_stop consume-queued-prompt \
+    || fail "preserving stop should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "preserve must keep the running marker for a possible successor"
+[[ "$(cat "$state_dir/@2.@code_notify_settle_pane" 2>/dev/null)" == "%3" ]] \
+    || fail "a preserved hint must arm the settle safety-net watch, even for claude"
+[[ "$(cat "$state_dir/@2.@code_notify_settle_badge_only" 2>/dev/null)" == "1" ]] \
+    || fail "the preserve must mark its settle watch badge-only (toast already sent)"
+[[ "$(window_name)" == "🌕 zsh" ]] \
+    || fail "precondition: the static running badge should be up (got: $(window_name))"
+printf '%s' "idle at the prompt" > "$state_dir/%3.pane_content"
+printf '%s' "$$" > "$state_dir/@2.@code_notify_agent_pid"
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+tmux_agent_exit_sweep || fail "preserve settle baseline tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "the baseline tick must not retire the preserved marker"
+[[ -f "$state_dir/@2.@code_notify_settle_fp" ]] \
+    || fail "the baseline tick should snapshot the pane"
+: > "$settle_notify_log"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" \
+    TMUX_SETTLE_SECONDS=0 tmux_agent_exit_sweep \
+    || fail "the settling tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "an idle pane must retire the falsely-preserved marker"
+[[ ! -f "$state_dir/@2.@code_notify_settle_pane" ]] \
+    || fail "the reconcile should disarm the settle watch"
+[[ ! -f "$state_dir/@2.@code_notify_settle_badge_only" ]] \
+    || fail "the reconcile should clear the badge-only marker with the watch"
+[[ "$(window_name)" == "zsh" ]] \
+    || fail "the reconcile should restore the window name (got: $(window_name))"
+[[ "$(cat "$settle_notify_log")" == "%3|stop|claude|"*"|zsh|0|1|1" ]] \
+    || fail "the reconcile must run the notifier badge-only — the preserving Stop already toasted (got: $(cat "$settle_notify_log"))"
+for opt_name in @code_notify_agent_pid window_name; do
+    rm -f "$state_dir/@2.$opt_name"
+done
+rm -f "$state_dir/%3.pane_content" "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+pass "a falsely-preserved queued-prompt marker self-heals once the pane idles"
 
 # --- REGRESSION: raced duplicate sweep chains collapse instead of persisting ---
 # Two hook processes can both read an empty pending flag and both register a
@@ -2229,7 +2293,7 @@ CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" \
     || fail "settled spinner-mode review should drop the running epoch"
 [[ ! -f "$state_dir/.@code_notify_spinner_snip" ]] \
     || fail "settled spinner-mode review should disarm the spinner"
-[[ "$(cat "$settle_notify_log")" == "%3|stop|codex|"*"|zsh|0|1" ]] \
+[[ "$(cat "$settle_notify_log")" == "%3|stop|codex|"*"|zsh|0|1|" ]] \
     || fail "spinner should be visually inactive before synthetic completion (got: $(cat "$settle_notify_log"))"
 rm -f "$state_dir/%3.pane_content"
 pass "settled review removes the spinner before synthetic completion"
