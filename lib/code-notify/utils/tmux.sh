@@ -694,6 +694,54 @@ TMUX_DIALOG_WATCH_AGENTS="${CODE_NOTIFY_TMUX_DIALOG_WATCH_AGENTS:-antigravity}"
 # before that resets the watch silently — the user was already there.
 # 0 disables the watch.
 TMUX_DIALOG_NOTIFY_SECONDS="${CODE_NOTIFY_TMUX_DIALOG_NOTIFY_SECONDS:-5}"
+# Agents whose running marker additionally gets an interrupt watch
+# (pipe-separated names as passed by the hooks). Cancelling a turn with Escape
+# fires no hook at all — Claude Code's Stop is documented not to run when the
+# stop was a user interrupt — so the marker, and the spinner it renders, would
+# stand until the next prompt or the 4-hour TTL. The queued-prompt preserve
+# (see tmux_running_stop) only covers the interrupt whose user then submits
+# again; an interrupt the user walks away from has no other clear path.
+#
+# For agents listed here, while the running marker is fresh the agent-exit
+# sweep captures the recorded pane and looks for the agent's own interrupt line
+# (TMUX_INTERRUPT_MARKERS). Once it has stayed on screen with the pane holding
+# still across ticks spanning TMUX_INTERRUPT_SECONDS, the marker comes down
+# silently — no toast, sound or voice. That silence is the point: the user
+# pressed Escape, so they are at the keyboard and an alert would only be noise.
+# This is why an interrupt is not simply folded into TMUX_SETTLE_AGENTS, whose
+# stop synthesizes a full completion notification.
+#
+# The match deliberately spans the whole visible pane rather than its tail.
+# Claude Code pins its input box to the bottom row but leaves the transcript
+# where it ended, so in a short session the interrupt line sits near the TOP
+# with dozens of blank rows below it — a tail window misses it entirely.
+#
+# Stillness, not position, is what keeps the scrollback from lying. The
+# interrupt line stays rendered after the user submits the next prompt, but a
+# working agent repaints its elapsed counter every second, so the fingerprint
+# never holds still and the watch cannot fire on a live turn. A turn that ends
+# normally has its marker taken down by the real Stop hook, leaving nothing for
+# this watch to act on, and a turn paused for approval drops the marker too.
+# Codex is listed even though its settle watch (TMUX_SETTLE_AGENTS) already
+# retires an interrupted marker: settle synthesizes a full completion, so an
+# Escape used to arrive as "Codex is done" plus, a minute later, an idle nudge.
+# This watch runs earlier in the sweep and on a shorter threshold, so it
+# pre-empts settle for a genuine interrupt and the turn ends silently. An
+# interrupt-free stall still settles normally with its completion intact.
+TMUX_INTERRUPT_WATCH_AGENTS="${CODE_NOTIFY_TMUX_INTERRUPT_WATCH_AGENTS:-claude|codex|antigravity}"
+# Claude renders "⎿  Interrupted · What should Claude do instead?" for a
+# cancelled turn and "Interrupted by user" for a cancelled tool call.
+# Antigravity is a Claude Code fork and renders the same line with its own
+# name. Codex instead renders "■ Conversation interrupted - tell the model
+# what to do differently." — a different wording, hence the alternation.
+# Anchored past the leading box-drawing decoration like TMUX_DIALOG_MARKERS, so
+# prose mentioning an interruption mid-line does not match. The `-` (not `:-`)
+# expansion makes an explicit empty value stick, which disables the watch.
+TMUX_INTERRUPT_MARKERS="${CODE_NOTIFY_TMUX_INTERRUPT_MARKERS-^[^A-Za-z]*(Interrupted|Conversation interrupted)([[:space:]]|$)}"
+# Seconds the interrupt line must stay on a still pane before the marker is
+# retired. The check rides the agent-exit poll, so the effective latency is the
+# first tick past this age. 0 disables the watch.
+TMUX_INTERRUPT_SECONDS="${CODE_NOTIFY_TMUX_INTERRUPT_SECONDS:-5}"
 
 tmux_running_enabled() {
     [[ "${CODE_NOTIFY_TMUX_RUNNING:-}" != "false" ]] && tmux_badge_enabled
@@ -860,6 +908,81 @@ tmux_running_dialog_disarm() {
     local window_id="$1"
     tmux set-option -wu -t "$window_id" @code_notify_dialog_ctx 2>/dev/null
     tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
+}
+
+# Arm the interrupt watch on a window whose agent (per
+# TMUX_INTERRUPT_WATCH_AGENTS) can end a turn with Escape and no hook. The pane
+# is what gets observed; unlike the settle and dialog watches this one notifies
+# nothing, so it needs no agent/project context to reconstruct an event from.
+#
+# CODE_NOTIFY_TMUX_RUNNING_MARKERFILE (optional) is a caller-side "indicator is
+# already lit" cache that must die with the indicator. Antigravity sets it: it
+# has no UserPromptSubmit, so its PreInvocation is the only thing that lights
+# the marker, and it skips the tmux call whenever that file looks fresh. This
+# watch retires an indicator far sooner than the TTL those files were sized
+# for, so the teardown unlinks the file and the next turn re-arms normally.
+tmux_running_interrupt_arm() {
+    local window_id="$1" pane_id="$2"
+    local agent="${CODE_NOTIFY_TMUX_AGENT_NAME:-}"
+    local markerfile="${CODE_NOTIFY_TMUX_RUNNING_MARKERFILE:-}"
+    local pane_re='^%[0-9]+$'
+    # A fresh turn never inherits the previous turn's stillness countdown.
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_fp 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_since 2>/dev/null
+    if [[ -n "$markerfile" ]]; then
+        tmux set-option -w -t "$window_id" @code_notify_interrupt_markerfile "$markerfile" 2>/dev/null
+    else
+        tmux set-option -wu -t "$window_id" @code_notify_interrupt_markerfile 2>/dev/null
+    fi
+    if [[ -z "$agent" ]] || [[ "|$TMUX_INTERRUPT_WATCH_AGENTS|" != *"|$agent|"* ]] ||
+        [[ -z "$TMUX_INTERRUPT_MARKERS" ]] ||
+        [[ ! "${TMUX_INTERRUPT_SECONDS:-0}" =~ ^[0-9]+$ ]] ||
+        (( TMUX_INTERRUPT_SECONDS <= 0 )) ||
+        [[ ! "$pane_id" =~ $pane_re ]]; then
+        tmux set-option -wu -t "$window_id" @code_notify_interrupt_pane 2>/dev/null
+        return 0
+    fi
+    tmux set-option -w -t "$window_id" @code_notify_interrupt_pane "$pane_id" 2>/dev/null
+    # The watch rides the agent-exit sweep; make sure it is ticking even when
+    # PID resolution failed and nothing else armed it.
+    tmux_agent_exit_schedule_sweep
+    return 0
+}
+
+tmux_running_interrupt_disarm() {
+    local window_id="$1"
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_pane 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_fp 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_since 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_markerfile 2>/dev/null
+}
+
+# Drop the caller-side "already lit" cache recorded at arm time, so the agent's
+# next turn lights the indicator again instead of trusting a file that outlived
+# the marker it described. Constrained to the notification state directory: the
+# path comes from a tmux option, and a teardown has no business unlinking
+# anything outside it.
+tmux_running_interrupt_markerfile_clear() {
+    local window_id="$1" markerfile
+    markerfile=$(tmux show-options -wqv -t "$window_id" @code_notify_interrupt_markerfile 2>/dev/null)
+    [[ -n "$markerfile" ]] || return 0
+    [[ "$markerfile" == "$HOME/.claude/notifications/"*.running ]] || return 0
+    [[ "$markerfile" != *..* ]] || return 0
+    rm -f "$markerfile" 2>/dev/null || true
+    return 0
+}
+
+# "1" when a captured pane carries the agent's interrupt line.
+tmux_interrupt_flag() {
+    local content="$1"
+    # -e guards patterns that begin with "-" (a user-supplied override) from
+    # being parsed as grep options.
+    if [[ -n "$TMUX_INTERRUPT_MARKERS" ]] &&
+        printf '%s\n' "$content" | grep -qE -e "$TMUX_INTERRUPT_MARKERS" 2>/dev/null; then
+        printf '1'
+        return
+    fi
+    printf '0'
 }
 
 # True when idle_prompt alerts are enabled — same notify-types file config.sh
@@ -1100,6 +1223,12 @@ tmux_agent_exit_schedule_sweep() {
     q_dialog_agents=$(tmux_focus_shell_quote "$TMUX_DIALOG_WATCH_AGENTS")
     q_dialog_markers=$(tmux_focus_shell_quote "$TMUX_DIALOG_MARKERS")
     q_dialog_options=$(tmux_focus_shell_quote "$TMUX_DIALOG_OPTIONS")
+    # Same for the interrupt watch: the fired sweep matches the marker and
+    # measures the stillness window itself.
+    local q_int_secs q_int_agents q_int_markers
+    q_int_secs=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_SECONDS")
+    q_int_agents=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_WATCH_AGENTS")
+    q_int_markers=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_MARKERS")
     inner="cur=\$($q_tmux -S $q_socket show-options -gqv @code_notify_agent_exit_sweep_scheduled 2>/dev/null); "
     inner+="if [ \"\$cur\" != $q_token ]; then exit 0; fi; "
     inner+="$q_tmux -S $q_socket set-option -gu @code_notify_agent_exit_sweep_scheduled; "
@@ -1111,6 +1240,9 @@ tmux_agent_exit_schedule_sweep() {
     inner+="CODE_NOTIFY_TMUX_DIALOG_WATCH_AGENTS=$q_dialog_agents "
     inner+="CODE_NOTIFY_TMUX_DIALOG_MARKERS=$q_dialog_markers "
     inner+="CODE_NOTIFY_TMUX_DIALOG_OPTIONS=$q_dialog_options "
+    inner+="CODE_NOTIFY_TMUX_INTERRUPT_SECONDS=$q_int_secs "
+    inner+="CODE_NOTIFY_TMUX_INTERRUPT_WATCH_AGENTS=$q_int_agents "
+    inner+="CODE_NOTIFY_TMUX_INTERRUPT_MARKERS=$q_int_markers "
     inner+="bash $q_lib agent-exit-sweep; fi"
     inner="${inner//\#/##}"
     # Claim before arming (see tmux_timer_chain_token); a failed arm rolls
@@ -1127,13 +1259,14 @@ tmux_agent_exit_sweep() {
     { [[ -n "${TMUX:-}" ]] && command -v tmux &> /dev/null; } || return 0
     local now window_id pid since settle_pane idle_watch resume orig live=0
     local fp_now fp_prev settle_since settle_ctx settle_badge_only mode transition_lock transition_token
-    local current_pid current_since current_settle_since
+    local current_pid current_since current_settle_since current_badge_only
     local ipane isince ifp1 ifp2 istate iagent iproject
     local dialog_ctx dialog_since dpane dagent dproject dialog_content
+    local interrupt_pane interrupt_fp interrupt_since interrupt_content
     now=$(date +%s)
     # orig (the badge marker) reads last: it is the only field that may embed
     # "|" (a window name), and read folds any remainder into the final var.
-    while IFS='|' read -r window_id pid since settle_pane idle_watch resume dialog_ctx dialog_since orig; do
+    while IFS='|' read -r window_id pid since settle_pane idle_watch resume dialog_ctx dialog_since interrupt_pane interrupt_fp interrupt_since settle_badge_only orig; do
         [[ "$window_id" =~ ^@[0-9]+$ ]] || continue
         # list-windows emits every window, with empty fields when the options
         # are unset. Windows that are neither PID-tracked nor settle-watched
@@ -1173,6 +1306,8 @@ tmux_agent_exit_sweep() {
                     tmux_running_settle_disarm "$window_id"
                     tmux_idle_watch_disarm "$window_id"
                     tmux_running_dialog_disarm "$window_id"
+                    tmux_running_interrupt_markerfile_clear "$window_id"
+                    tmux_running_interrupt_disarm "$window_id"
                     tmux_badge_clear_locked "$window_id"
                     tmux_agent_exit_untrack "$window_id"
                 else
@@ -1269,6 +1404,81 @@ tmux_agent_exit_sweep() {
                 fi
             fi
         fi
+        # Interrupt watch (see TMUX_INTERRUPT_WATCH_AGENTS): Escape cancels a
+        # turn without firing any hook, so the agent's own interrupt line
+        # sitting on a pane that has stopped repainting is the only evidence
+        # the run is over. Retire the marker silently — no synthetic event,
+        # unlike the settle watch: the user pressed Escape and is right there.
+        # Same observability guards as the watches above; the marker epoch is
+        # re-read under the transition lock so a turn that started between the
+        # snapshot and now keeps its indicator.
+        #
+        # A force-armed settle watch (the queued-prompt preserve, marked
+        # badge-only) owns this marker instead: that Stop withheld a terminal
+        # badge which only the settle reconcile applies, so a silent teardown
+        # here would drop it. Defer — the settle watch retires the same marker
+        # a few seconds later. The snapshot below is only a cheap pre-filter;
+        # the flag is re-read under the lock, because a preserve landing after
+        # the snapshot is invisible to the epoch check (see there).
+        if [[ "$interrupt_pane" =~ ^%[0-9]+$ ]] && [[ "$since" =~ ^[0-9]+$ ]] &&
+            [[ -z "$settle_badge_only" ]] &&
+            (( now - since < TMUX_RUNNING_TTL )) &&
+            [[ "${TMUX_INTERRUPT_SECONDS:-0}" =~ ^[0-9]+$ ]] &&
+            (( TMUX_INTERRUPT_SECONDS > 0 )); then
+            live=1
+            if [[ "$(tmux display-message -p -t "$interrupt_pane" '#{window_id}' 2>/dev/null)" == "$window_id" ]] &&
+                interrupt_content=$(tmux capture-pane -p -t "$interrupt_pane" 2>/dev/null); then
+                if [[ "$(tmux_interrupt_flag "$interrupt_content")" == "1" ]]; then
+                    # Snapshot values, not fresh reads: only the arm and this
+                    # branch write them, and the marker epoch re-read under the
+                    # lock below is what guards the turn-transition race. A
+                    # value that went stale mid-sweep costs one re-baseline.
+                    fp_now=$(printf '%s\n' "$interrupt_content" | cksum 2>/dev/null)
+                    if [[ "$fp_now" != "$interrupt_fp" ]] || [[ ! "$interrupt_since" =~ ^[0-9]+$ ]]; then
+                        # First sighting, or the pane is still moving: re-baseline.
+                        tmux set-option -w -t "$window_id" @code_notify_interrupt_fp "$fp_now" 2>/dev/null
+                        tmux set-option -w -t "$window_id" @code_notify_interrupt_since "$now" 2>/dev/null
+                    elif (( now - interrupt_since >= TMUX_INTERRUPT_SECONDS )) &&
+                        tmux_running_transition_lock_acquire "$window_id"; then
+                        transition_lock="$TMUX_RUNNING_TRANSITION_LOCKDIR"
+                        transition_token="$TMUX_RUNNING_TRANSITION_LOCKTOKEN"
+                        current_since=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
+                        # The epoch alone does not detect a preserve that
+                        # landed after the snapshot: tmux_running_stop's
+                        # queued-prompt path returns before touching
+                        # @code_notify_running, so the epoch is deliberately
+                        # unchanged and this check would pass. Re-read the
+                        # badge-only flag under the lock, as the settle path
+                        # does, or the badge that Stop withheld is lost.
+                        current_badge_only=$(tmux show-options -wqv -t "$window_id" @code_notify_settle_badge_only 2>/dev/null)
+                        if [[ "$current_since" == "$since" ]] && [[ -z "$current_badge_only" ]]; then
+                            tmux set-option -wu -t "$window_id" @code_notify_running 2>/dev/null
+                            tmux_running_settle_disarm "$window_id"
+                            tmux_running_dialog_disarm "$window_id"
+                            # Before the disarm drops the recorded path.
+                            tmux_running_interrupt_markerfile_clear "$window_id"
+                            tmux_running_interrupt_disarm "$window_id"
+                            mode=$(tmux show-options -wqv -t "$window_id" @code_notify_clear_mode 2>/dev/null)
+                            if [[ "$mode" == "running" ]]; then
+                                tmux_badge_clear_locked "$window_id"
+                            fi
+                            tmux_running_transition_lock_release "$transition_lock" "$transition_token"
+                            # Dropping the marker does not repaint the status
+                            # line by itself, and no badge rename follows this
+                            # teardown to force one (see tmux_running_stop).
+                            tmux refresh-client -S 2>/dev/null
+                            continue
+                        fi
+                        tmux_running_transition_lock_release "$transition_lock" "$transition_token"
+                    fi
+                elif [[ -n "$interrupt_since$interrupt_fp" ]]; then
+                    # The line went away (the user answered the "what instead?"
+                    # prompt): the next sighting starts its own countdown.
+                    tmux set-option -wu -t "$window_id" @code_notify_interrupt_fp 2>/dev/null
+                    tmux set-option -wu -t "$window_id" @code_notify_interrupt_since 2>/dev/null
+                fi
+            fi
+        fi
         # Settle watch (see TMUX_SETTLE_AGENTS): while a watched agent's
         # running marker is fresh, a pane whose rendered content holds still
         # for a full settle window means the turn ended without a hook
@@ -1343,7 +1553,7 @@ tmux_agent_exit_sweep() {
             tmux set-option -w -t "$window_id" @code_notify_agent_pid "$pid" 2>/dev/null
         fi
     done < <(tmux list-windows -a -F \
-        '#{window_id}|#{@code_notify_agent_pid}|#{@code_notify_running}|#{@code_notify_settle_pane}|#{@code_notify_idle_watch}|#{@code_notify_resume_pending}|#{@code_notify_dialog_ctx}|#{@code_notify_dialog_since}|#{@code_notify_orig_name}' 2>/dev/null)
+        '#{window_id}|#{@code_notify_agent_pid}|#{@code_notify_running}|#{@code_notify_settle_pane}|#{@code_notify_idle_watch}|#{@code_notify_resume_pending}|#{@code_notify_dialog_ctx}|#{@code_notify_dialog_since}|#{@code_notify_interrupt_pane}|#{@code_notify_interrupt_fp}|#{@code_notify_interrupt_since}|#{@code_notify_settle_badge_only}|#{@code_notify_orig_name}' 2>/dev/null)
     if [[ "$live" -eq 1 ]]; then
         tmux_agent_exit_schedule_sweep
     fi
@@ -1437,36 +1647,69 @@ tmux_spinner_insert_after_window_number() {
     fi
 }
 
-# Add the spinner snippet to the global window-status formats and lower
-# status-interval to 1 so the frame advances every second. Idempotent: the
-# saved snippet (@code_notify_spinner_snip) doubles as the armed flag. The
-# exact snippet is saved so disarm can strip precisely what was added even if
-# the TTL env var changed in between; the user's status-interval (global and
-# any session-local values) is saved for the same reason.
-tmux_spinner_arm() {
-    { [[ -n "${TMUX:-}" ]] && command -v tmux &> /dev/null; } || return 0
-    local snip
-    snip=$(tmux show-options -gqv @code_notify_spinner_snip 2>/dev/null)
-    if [[ -n "$snip" ]]; then
-        # Already armed globally, but a session created — or given a
-        # session-local status-interval — since then still ticks at its own
-        # rate: bring it in line.
-        tmux_spinner_sync_session_intervals
+# Put the snippet into one global window-status format unless it is already
+# there. Prints "1" when it had to be added, nothing when the format already
+# carried it — the caller uses that to tell a first arm (or a re-arm after the
+# injection was lost) apart from the steady state.
+tmux_spinner_inject_format() {
+    local option="$1" snip="$2" cur
+    cur=$(tmux show-options -gwv "$option" 2>/dev/null)
+    if [[ "$cur" == *"$snip"* ]]; then
         return 0
     fi
-    snip=$(tmux_spinner_build_format)
-    local interval wsf wscf
-    interval=$(tmux show-options -gv status-interval 2>/dev/null)
-    wsf=$(tmux show-options -gwv window-status-format 2>/dev/null)
-    wscf=$(tmux show-options -gwv window-status-current-format 2>/dev/null)
-    tmux set-option -g @code_notify_spinner_snip "$snip" 2>/dev/null || return 0
-    tmux set-option -g @code_notify_saved_interval "${interval:-15}" 2>/dev/null
-    tmux set-option -g @code_notify_clock '%s' 2>/dev/null
-    tmux set-option -gw window-status-format \
-        "$(tmux_spinner_insert_after_window_number "$wsf" "$snip")" 2>/dev/null
-    tmux set-option -gw window-status-current-format \
-        "$(tmux_spinner_insert_after_window_number "$wscf" "$snip")" 2>/dev/null
-    tmux set-option -g status-interval 1 2>/dev/null
+    tmux set-option -gw "$option" \
+        "$(tmux_spinner_insert_after_window_number "$cur" "$snip")" 2>/dev/null
+    printf '1'
+    return 0
+}
+
+# Add the spinner snippet to the global window-status formats and lower
+# status-interval to 1 so the frame advances every second. Idempotent: the
+# formats themselves are the armed state, so re-arming only writes what is
+# actually missing. The exact snippet is saved in @code_notify_spinner_snip so
+# disarm can strip precisely what was added even if the TTL env var changed in
+# between; the user's status-interval (global and any session-local values) is
+# saved for the same reason.
+#
+# The saved snippet deliberately does NOT double as an "already armed" flag.
+# Sourcing a tmux config re-sets window-status-format wholesale from the
+# theme — dropping the injection and restoring the user's status-interval —
+# while leaving our own options untouched, so a flag check would report armed
+# for a spinner that had stopped rendering. Nothing would repair it either:
+# only tmux_spinner_disarm_if_idle clears that flag, and it holds off while any
+# window carries a running epoch, which on a busy server means the spinner
+# stays gone for up to TMUX_RUNNING_TTL. Verifying the formats instead makes
+# the next prompt heal it.
+tmux_spinner_arm() {
+    { [[ -n "${TMUX:-}" ]] && command -v tmux &> /dev/null; } || return 0
+    local snip interval injected=""
+    snip=$(tmux show-options -gqv @code_notify_spinner_snip 2>/dev/null)
+    if [[ -z "$snip" ]]; then
+        snip=$(tmux_spinner_build_format)
+        # Save before injecting: a snippet in a format that disarm cannot look
+        # up is one it can never strip.
+        tmux set-option -g @code_notify_spinner_snip "$snip" 2>/dev/null || return 0
+    fi
+    injected+=$(tmux_spinner_inject_format window-status-format "$snip")
+    injected+=$(tmux_spinner_inject_format window-status-current-format "$snip")
+    if [[ -n "$injected" ]]; then
+        # Only on a (re-)injection, never in the steady state: a bare
+        # status-interval above 1 while the formats are intact is the user
+        # raising it deliberately, and re-arming must not fight that on every
+        # prompt (same reasoning as tmux_spinner_sync_session_intervals). A
+        # config reload takes the formats with it, which is what tells the two
+        # apart. An interval that is already 1 needs no save — restoring it
+        # would be a no-op and disarm leaves an unsaved value alone.
+        tmux set-option -g @code_notify_clock '%s' 2>/dev/null
+        interval=$(tmux show-options -gv status-interval 2>/dev/null)
+        if [[ "$interval" != "1" ]]; then
+            tmux set-option -g @code_notify_saved_interval "${interval:-15}" 2>/dev/null
+            tmux set-option -g status-interval 1 2>/dev/null
+        fi
+    fi
+    # Also runs in the steady state: a session created — or given a
+    # session-local status-interval — since the arm still ticks at its own
+    # rate, so bring it in line.
     tmux_spinner_sync_session_intervals
     return 0
 }
@@ -1572,6 +1815,7 @@ tmux_running_start() {
     tmux_idle_watch_disarm "$window_id"
     tmux_running_settle_arm "$window_id" "$pane_id"
     tmux_running_dialog_arm "$window_id" "$pane_id"
+    tmux_running_interrupt_arm "$window_id" "$pane_id"
     if (( spinner )); then
         tmux_agent_exit_track "$window_id"
         tmux_spinner_arm
@@ -1896,6 +2140,7 @@ tmux_prompt_submit() {
     tmux_idle_watch_disarm "$window_id"
     tmux_running_settle_arm "$window_id" "$TMUX_PANE"
     tmux_running_dialog_arm "$window_id" "$TMUX_PANE"
+    tmux_running_interrupt_arm "$window_id" "$TMUX_PANE"
     if (( spinner )); then
         # Arm the snippet (a show-options no-op when already armed).
         tmux_agent_exit_track "$window_id"
@@ -2147,6 +2392,14 @@ tmux_running_resume_window() {
     # not carry into the resumed turn — a later dialog would fire without
     # its confirmation tick.
     tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
+    # Same for the interrupt watch's stillness baseline (see
+    # TMUX_INTERRUPT_WATCH_AGENTS). This path relights the marker directly
+    # rather than through tmux_running_start, so nothing else re-arms it, and
+    # a pre-pause sighting is already older than TMUX_INTERRUPT_SECONDS by the
+    # time anyone answers — the resumed turn would then be one matching pane
+    # capture away from a silent teardown instead of a fresh countdown.
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_fp 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_since 2>/dev/null
     if (( spinner )); then
         tmux_spinner_arm
     elif tmux_badge_enabled; then

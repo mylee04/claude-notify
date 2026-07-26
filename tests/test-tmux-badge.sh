@@ -149,8 +149,13 @@ case "$cmd" in
                 rp=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_resume_pending" 2>/dev/null)
                 dc=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_dialog_ctx" 2>/dev/null)
                 ds=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_dialog_since" 2>/dev/null)
+                ip=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_interrupt_pane" 2>/dev/null)
+                ifp=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_interrupt_fp" 2>/dev/null)
+                is=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_interrupt_since" 2>/dev/null)
+                bo=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_settle_badge_only" 2>/dev/null)
                 on=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_orig_name" 2>/dev/null)
-                printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$w" "$pid" "$run" "$sp" "$iw" "$rp" "$dc" "$ds" "$on"
+                printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+                    "$w" "$pid" "$run" "$sp" "$iw" "$rp" "$dc" "$ds" "$ip" "$ifp" "$is" "$bo" "$on"
             done
         elif [[ "$fmt" == *resume_pending* ]]; then
             # The resume poll pairs each pending epoch with the window's
@@ -190,6 +195,19 @@ case "$cmd" in
             printf '%s' "$FAKE_TMUX_SETTLE_RACE_EPOCH" \
                 > "$FAKE_TMUX_STATE/${target}.@code_notify_running"
             rm -f "$FAKE_TMUX_STATE/${target}.@code_notify_settle_since"
+            exit 0
+        fi
+        if [[ "${FAKE_TMUX_INTERRUPT_RACE_MARKER:-}" != "" ]] &&
+            [[ "${rest[0]}" == "@code_notify_running" ]] &&
+            [[ ! -e "$FAKE_TMUX_INTERRUPT_RACE_MARKER" ]]; then
+            # Model a queued-prompt preserve landing after the sweep's
+            # list-windows snapshot. The preserve marks the settle watch
+            # badge-only and deliberately leaves the running epoch alone
+            # (tmux_running_stop returns before unsetting it), so the epoch
+            # check the interrupt teardown makes cannot notice it.
+            cat "$FAKE_TMUX_STATE/${target}.${rest[0]}" 2>/dev/null
+            : > "$FAKE_TMUX_INTERRUPT_RACE_MARKER"
+            printf '1' > "$FAKE_TMUX_STATE/${target}.@code_notify_settle_badge_only"
             exit 0
         fi
         if [[ "${FAKE_TMUX_PAUSE_BADGE_SET:-}" == "1" ]] &&
@@ -1549,6 +1567,264 @@ CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" \
 rm -f "$state_dir/%3.pane_content" "$state_dir/@2.@code_notify_agent_pid"
 pass "settled codex pane retires running state before synthetic completion"
 
+# --- the interrupt watch arms for the listed agents, not for others ---
+for a in claude codex antigravity; do
+    CODE_NOTIFY_TMUX_AGENT_NAME=$a tmux_prompt_submit \
+        || fail "$a prompt-submit for the interrupt watch should succeed"
+    [[ "$(cat "$state_dir/@2.@code_notify_interrupt_pane" 2>/dev/null)" == "%3" ]] \
+        || fail "$a prompt-submit should arm the interrupt watch on its pane"
+    tmux_running_stop || fail "running-stop after $a interrupt arm should succeed"
+done
+CODE_NOTIFY_TMUX_AGENT_NAME=gemini tmux_prompt_submit \
+    || fail "gemini prompt-submit should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_pane" ]] \
+    || fail "an unlisted agent must not arm the interrupt watch"
+tmux_running_stop || fail "running-stop after gemini prompt should succeed"
+pass "interrupt watch arms for the listed agents only"
+
+# --- each agent's real interrupt line matches; ordinary output does not ---
+# Wording captured from live panes: Antigravity is a Claude Code fork and
+# reuses Claude's line, Codex uses its own.
+[[ "$(tmux_interrupt_flag "  ⎿  Interrupted · What should Claude do instead?")" == "1" ]] \
+    || fail "claude's interrupt line should match"
+[[ "$(tmux_interrupt_flag "  ⎿  Interrupted · What should Antigravity CLI do instead?")" == "1" ]] \
+    || fail "antigravity's interrupt line should match"
+[[ "$(tmux_interrupt_flag "■ Conversation interrupted - tell the model what to do differently.")" == "1" ]] \
+    || fail "codex's interrupt line should match"
+[[ "$(tmux_interrupt_flag "✻ Thinking… (4s · esc to interrupt)")" == "0" ]] \
+    || fail "the working spinner's 'esc to interrupt' hint must not match"
+[[ "$(tmux_interrupt_flag "the request was interrupted by a timeout")" == "0" ]] \
+    || fail "prose mentioning an interruption mid-line must not match"
+[[ "$(CODE_NOTIFY_TMUX_INTERRUPT_MARKERS= ; TMUX_INTERRUPT_MARKERS= ; tmux_interrupt_flag "  ⎿  Interrupted · x")" == "0" ]] \
+    || fail "an empty marker set should disable detection"
+pass "interrupt markers cover claude, antigravity and codex without false hits"
+
+# --- a working pane keeps its marker; an interrupted one loses it silently ---
+# The interrupt line alone is not enough: it stays rendered above the input box
+# while the next turn runs, so the pane must also hold still. Once it does, the
+# marker goes down with NO synthetic completion — the user pressed Escape and
+# is sitting at the keyboard.
+printf '%s' "✻ Thinking… (4s · esc to interrupt)" > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the interrupt flow should succeed"
+[[ "$(window_name)" == "🌕 zsh" ]] || fail "precondition: running icon should be up"
+tmux_agent_exit_sweep || fail "working-pane interrupt tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a working pane without an interrupt line must keep the marker"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "no interrupt line means no stillness countdown"
+# Real geometry: Claude Code pins the input box to the bottom row but leaves
+# the transcript where it ended, so on a short session the interrupt line sits
+# near the TOP with dozens of blank rows below it. A tail-anchored match missed
+# this entirely — the case that shipped a broken first cut of this watch.
+{
+    printf '%s\n' "❯ any performance issue in this tool?"
+    printf '%s\n' "⏺ I'll look at the codebase to assess performance."
+    printf '%s\n' "  ⎿  Interrupted · What should Claude do instead?"
+    for _ in $(seq 36); do printf '\n'; done
+    printf '%s\n' "─────────────────────"
+    printf '%s\n' "❯ "
+    printf '%s\n' "  ⏸ manual mode on · ← for agents"
+} > "$state_dir/%3.pane_content"
+tmux_agent_exit_sweep || fail "first interrupt tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "the first sighting only baselines; it must not retire the marker"
+[[ -f "$state_dir/@2.@code_notify_interrupt_fp" ]] \
+    || fail "the first sighting should store the pane snapshot"
+printf '%s\n' "  ⎿  Interrupted · What should Claude do instead?" "(typing)" \
+    > "$state_dir/%3.pane_content"
+tmux_agent_exit_sweep || fail "moving-pane interrupt tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a still-repainting pane must keep the marker even with the line up"
+: > "$settle_notify_log"
+# Age the sighting past the stillness window instead of zeroing the threshold:
+# 0 disables the watch (as it does for the dialog watch), so it cannot stand in
+# for "the pane has held still long enough".
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep \
+    || fail "settled interrupt tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "an interrupted still pane should retire the running marker"
+[[ "$(window_name)" == "zsh" ]] \
+    || fail "the interrupt teardown should restore the window name (got: $(window_name))"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_pane" ]] \
+    || fail "the interrupt teardown should disarm the watch"
+[[ ! -s "$settle_notify_log" ]] \
+    || fail "an interrupt must not notify (got: $(cat "$settle_notify_log"))"
+pass "interrupted claude pane retires running state silently"
+
+# --- the next prompt re-arms the indicator after a silent teardown ---
+# The teardown must leave the window in a clean pre-turn state: nothing about
+# it may stop the next UserPromptSubmit from lighting the indicator again, and
+# it must not strand a queued-prompt hint for some later Stop to consume.
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "prompt-submit after an interrupt teardown should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "the next prompt must re-arm the running marker"
+[[ "$(window_name)" == "🌕 zsh" ]] \
+    || fail "the next prompt must put the running indicator back (got: $(window_name))"
+[[ "$(cat "$state_dir/@2.@code_notify_interrupt_pane" 2>/dev/null)" == "%3" ]] \
+    || fail "the next prompt must re-arm the interrupt watch"
+[[ ! -f "$state_dir/@2.@code_notify_queued_prompt" ]] \
+    || fail "a teardown-then-prompt must not strand a queued-prompt hint"
+
+# The interrupt line is STILL on screen during this new turn — it stays above
+# the input box until output scrolls it away. Only the pane repainting keeps
+# the watch off it, so prove a working turn survives the lingering line.
+tmux_agent_exit_sweep || fail "new-turn baseline tick should succeed"
+printf '%s\n' "  ⎿  Interrupted · What should Claude do instead?" \
+    "❯ do it differently" "✻ Thinking… (5s · esc to interrupt)" \
+    > "$state_dir/%3.pane_content"
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+tmux_agent_exit_sweep || fail "new-turn repaint tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a repainting new turn must survive the lingering interrupt line"
+[[ "$(window_name)" == "🌕 zsh" ]] \
+    || fail "the new turn must keep its running indicator (got: $(window_name))"
+tmux_running_stop || fail "running-stop after the re-arm check should succeed"
+pass "next prompt re-arms the indicator; a live turn survives the stale interrupt line"
+
+# --- the teardown drops the caller's "already lit" cache (Antigravity) ---
+# agy has no UserPromptSubmit: its PreInvocation is the only thing that lights
+# the marker, and it skips the tmux call while its per-conversation marker file
+# looks fresh. That file was sized for the 4-hour TTL, so an interrupt teardown
+# that left it behind would keep the whole next turn unlit.
+agy_marker="$HOME/.claude/notifications/agy/conv-test.running"
+mkdir -p "$(dirname "$agy_marker")"
+printf '%s' "$(date +%s)" > "$agy_marker"
+printf '%s\n' "  ⎿  Interrupted · What should Antigravity CLI do instead?" \
+    > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity \
+    CODE_NOTIFY_TMUX_RUNNING_MARKERFILE="$agy_marker" tmux_prompt_submit \
+    || fail "antigravity prompt-submit should succeed"
+[[ "$(cat "$state_dir/@2.@code_notify_interrupt_markerfile" 2>/dev/null)" == "$agy_marker" ]] \
+    || fail "the arm should record the caller's marker file"
+tmux_agent_exit_sweep || fail "agy interrupt baseline tick should succeed"
+[[ -f "$agy_marker" ]] || fail "a baseline tick must not drop the marker file"
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+tmux_agent_exit_sweep || fail "agy interrupt tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "an interrupted agy pane should retire the running marker"
+[[ ! -f "$agy_marker" ]] \
+    || fail "the teardown must drop the marker file, or agy's next turn stays unlit"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_markerfile" ]] \
+    || fail "the teardown should also drop the recorded path"
+
+# A path outside the notification state dir is never unlinked.
+outside="$test_dir/not-ours.running"
+printf 'keep me' > "$outside"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity \
+    CODE_NOTIFY_TMUX_RUNNING_MARKERFILE="$outside" tmux_prompt_submit \
+    || fail "antigravity prompt-submit with a foreign path should succeed"
+tmux_agent_exit_sweep || fail "foreign-path baseline tick should succeed"
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+tmux_agent_exit_sweep || fail "foreign-path interrupt tick should succeed"
+[[ -f "$outside" ]] \
+    || fail "the teardown must never unlink outside the notification state dir"
+rm -f "$outside" "$state_dir/%3.pane_content"
+pass "interrupt teardown drops agy's lit-cache so its next turn re-arms"
+
+# --- a codex interrupt pre-empts the settle watch's synthetic completion ---
+# Codex arms both watches. Before this, an Escape reached the user as "Codex is
+# done" (settle's synthetic completion) and then an idle nudge a minute later.
+# The interrupt watch must win and end the turn silently; the settle path stays
+# intact for a stall with no interrupt line (covered by the test above).
+printf '%s\n' "■ Conversation interrupted - tell the model what to do differently." \
+    > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=codex tmux_prompt_submit \
+    || fail "codex prompt-submit for the interrupt flow should succeed"
+[[ -f "$state_dir/@2.@code_notify_settle_pane" ]] \
+    || fail "precondition: codex should still arm its settle watch"
+tmux_agent_exit_sweep || fail "codex interrupt baseline tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "the codex baseline tick must not retire the marker"
+: > "$settle_notify_log"
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep \
+    || fail "codex interrupt tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "an interrupted codex pane should retire the running marker"
+[[ ! -s "$settle_notify_log" ]] \
+    || fail "a codex interrupt must not synthesize a completion (got: $(cat "$settle_notify_log"))"
+[[ ! -f "$state_dir/@2.@code_notify_settle_pane" ]] \
+    || fail "the interrupt teardown should disarm the settle watch too"
+[[ ! -f "$state_dir/@2.@code_notify_idle_watch" ]] \
+    || fail "a silent interrupt teardown must not arm the idle nudge"
+pass "codex interrupt pre-empts the settle completion and the idle nudge"
+
+# --- a preserved stop's badge-only settle watch outranks the interrupt watch ---
+# That stop withheld its terminal badge for the settle reconcile to apply; a
+# silent interrupt teardown would drop the badge entirely.
+printf '%s' "  ⎿  Interrupted · What should Claude do instead?" \
+    > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the preserve precedence should succeed"
+tmux_agent_exit_sweep || fail "preserve-precedence baseline tick should succeed"
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '1' > "$state_dir/@2.@code_notify_settle_badge_only"
+tmux_agent_exit_sweep || fail "preserve-precedence tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a badge-only settle preserve must keep the interrupt watch off its marker"
+rm -f "$state_dir/@2.@code_notify_settle_badge_only"
+tmux_running_stop || fail "running-stop after the preserve precedence should succeed"
+rm -f "$state_dir/%3.pane_content"
+pass "badge-only settle preserve outranks the interrupt watch"
+
+# --- a preserve landing mid-sweep also outranks the interrupt watch ---
+# The badge-only value the sweep reads from list-windows is only a pre-filter.
+# tmux_running_stop's queued-prompt path returns BEFORE unsetting
+# @code_notify_running, so a preserve landing after the snapshot leaves the
+# teardown's epoch check passing — only a lock-time re-read of the flag keeps
+# the badge that Stop withheld alive.
+printf '%s' "  ⎿  Interrupted · What should Claude do instead?" \
+    > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the preserve race should succeed"
+tmux_agent_exit_sweep || fail "preserve-race baseline tick should succeed"
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+interrupt_race_marker="$test_dir/interrupt-race-fired"
+FAKE_TMUX_INTERRUPT_RACE_MARKER="$interrupt_race_marker" tmux_agent_exit_sweep \
+    || fail "preserve-race tick should succeed"
+[[ -e "$interrupt_race_marker" ]] \
+    || fail "precondition: the injected preserve should have fired"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a preserve landing after the snapshot must still keep the interrupt watch off its marker"
+rm -f "$state_dir/@2.@code_notify_settle_badge_only" "$interrupt_race_marker"
+tmux_running_stop || fail "running-stop after the preserve race should succeed"
+rm -f "$state_dir/%3.pane_content"
+pass "a preserve landing mid-sweep outranks the interrupt watch"
+
+# --- resuming from an approval clears the interrupt stillness baseline ---
+# Answering an approval emits no hook, so the resume poll relights the marker
+# through tmux_running_resume_window rather than tmux_running_start — nothing
+# on that path re-arms the watch. A sighting recorded before the pause is
+# always older than the threshold by the time anyone answers, so carrying it
+# into the resumed turn leaves it one matching capture from a silent teardown.
+printf '%s\n' "  ⎿  Interrupted · What should Claude do instead?" "working" \
+    > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit before the approval pause should succeed"
+tmux_agent_exit_sweep || fail "pre-pause interrupt baseline tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "precondition: the pre-pause tick should baseline the watch"
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+tmux_running_pause_for_input watch || fail "approval pause should succeed"
+tmux_running_resume_window "@2" || fail "resume-window should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "the resume must not carry a pre-pause sighting into the resumed turn"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_fp" ]] \
+    || fail "the resume must drop the pre-pause pane fingerprint too"
+# The resumed turn has to survive a tick with the interrupt line still up and
+# the pane not yet repainted — that is exactly the frame the stale baseline
+# would have torn down.
+tmux_agent_exit_sweep || fail "post-resume interrupt tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "the resumed turn must keep its marker instead of tearing down on the first tick"
+tmux_running_stop || fail "running-stop after the resume check should succeed"
+rm -f "$state_dir/%3.pane_content" \
+    "$state_dir/.@code_notify_resume_poll_scheduled"
+pass "resume clears the interrupt baseline so the resumed turn counts afresh"
+
 # --- a prompt racing settled-review teardown keeps the new run intact ---
 # Mutate the epoch immediately after the sweep's pre-lock settle read, exactly
 # where the old implementation could tear down a prompt that had just started.
@@ -2187,6 +2463,52 @@ tmux_spinner_disarm || fail "disarm after an interval change should succeed"
 [[ ! -f "$state_dir/.@code_notify_saved_interval" ]] \
     || fail "disarm should still drop the saved interval"
 pass "spinner disarm keeps a user-changed interval"
+
+# --- spinner: a config reload that wipes the status format is re-armed ---
+# Sourcing a tmux config re-sets window-status-format wholesale from the theme
+# and restores the user's status-interval, while leaving our own options in
+# place. Reading @code_notify_spinner_snip as an "already armed" flag left the
+# spinner dead for up to TMUX_RUNNING_TTL, since only the idle disarm clears
+# that flag and it holds off while any window is running. Arm must verify the
+# injection instead and repair it.
+printf '%s' "THEME-FMT" > "$state_dir/.window-status-format"
+printf '%s' "THEME-CUR" > "$state_dir/.window-status-current-format"
+printf '%s' "10" > "$state_dir/.status-interval"
+tmux_spinner_arm || fail "arm for the config-reload test should succeed"
+snip="$(cat "$state_dir/.@code_notify_spinner_snip")"
+printf '%s' "THEME-FMT" > "$state_dir/.window-status-format"           # source-file
+printf '%s' "THEME-CUR" > "$state_dir/.window-status-current-format"   # source-file
+printf '%s' "10" > "$state_dir/.status-interval"                       # source-file
+tmux_spinner_arm || fail "re-arm after a config reload should succeed"
+[[ "$(cat "$state_dir/.window-status-format")" == "$snip"THEME-FMT ]] \
+    || fail "re-arm should re-inject the lost snippet (got: $(cat "$state_dir/.window-status-format"))"
+[[ "$(cat "$state_dir/.window-status-current-format")" == "$snip"THEME-CUR ]] \
+    || fail "re-arm should re-inject into window-status-current-format"
+[[ "$(cat "$state_dir/.status-interval")" == "1" ]] \
+    || fail "re-arm should lower the reloaded status-interval again"
+[[ "$(cat "$state_dir/.@code_notify_saved_interval")" == "10" ]] \
+    || fail "re-arm should save the reloaded interval for disarm"
+tmux_spinner_disarm || fail "disarm after the reload re-arm should succeed"
+[[ "$(cat "$state_dir/.window-status-format")" == "THEME-FMT" ]] \
+    || fail "disarm after a reload re-arm should restore the theme format"
+[[ "$(cat "$state_dir/.status-interval")" == "10" ]] \
+    || fail "disarm after a reload re-arm should restore the interval"
+pass "a config reload that wipes the status format is re-armed"
+
+# --- spinner: re-arm keeps a global interval the user raised while armed ---
+# The counterpart to the reload repair above: an interval above 1 with the
+# formats still injected is the user's own doing, not a reload, and re-arming
+# must not fight it on every prompt.
+printf '%s' "10" > "$state_dir/.status-interval"
+tmux_spinner_arm || fail "arm for the interval re-arm test should succeed"
+printf '%s' "5" > "$state_dir/.status-interval"   # user raised it while armed
+tmux_spinner_arm || fail "re-arm after a user interval change should succeed"
+[[ "$(cat "$state_dir/.status-interval")" == "5" ]] \
+    || fail "re-arm must not re-lower an interval the user raised (got: $(cat "$state_dir/.status-interval"))"
+[[ "$(cat "$state_dir/.@code_notify_saved_interval")" == "10" ]] \
+    || fail "re-arm must keep the arm-time saved interval"
+tmux_spinner_disarm || fail "disarm after the interval re-arm test should succeed"
+pass "re-arm keeps a user-raised status-interval"
 
 # --- spinner: session-local intervals are lowered and restored ---
 # The global status-interval set does not reach a session with a local value;

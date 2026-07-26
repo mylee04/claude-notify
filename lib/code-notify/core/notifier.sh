@@ -681,7 +681,13 @@ agy_maybe_start_running() {
         fi
     fi
     printf '%s' "$now" > "$marker" 2>/dev/null || true
-    tmux_running_start 2>/dev/null || true
+    # Hand the marker path to the tmux layer. The interrupt watch can retire
+    # this window's indicator long before the TTL, and a marker left behind
+    # would then keep the whole next turn unlit — Antigravity has no
+    # UserPromptSubmit to re-light it, only this PreInvocation, which skips the
+    # tmux call whenever the marker looks fresh.
+    CODE_NOTIFY_TMUX_RUNNING_MARKERFILE="$marker" \
+        tmux_running_start 2>/dev/null || true
 }
 
 # Clear the per-conversation running marker so the next turn re-arms.
