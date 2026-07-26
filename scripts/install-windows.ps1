@@ -3301,8 +3301,8 @@ switch ($HookType.ToLower()) {
         )
         $longPool = @(
             "All done! $ToolDisplay completed your task in $ProjectName",
-            "$ToolDisplay finished working on your request in $ProjectName",
-            "Task complete! $ToolDisplay is ready for your review in $ProjectName",
+            "Task complete! $ToolDisplay finished working on your request in $ProjectName",
+            "Over to you! $ToolDisplay completed your task and is standing by in $ProjectName",
             "Good news! $ToolDisplay is done in $ProjectName",
             "Finished! $ToolDisplay wrapped up your request in $ProjectName"
         )

@@ -62,9 +62,11 @@ fake_path="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin"
 printf 'TestVoice\n' > "$HOME/.claude/notifications/voice-claude"
 
 # stop banner pools (see notifier.sh): the long pool is recognizable by its
-# exclamation openers and "your task/request" phrasing.
+# exclamation openers. Keep one alternative per pool entry — a phrase the
+# regex misses turns these assertions flaky, since the pool is picked from
+# at random.
 short_re='Claude (completed the task|finished the task|is done|wrapped up)'
-long_re='(All done!|finished working on your request|Task complete!|Good news!|Finished!)'
+long_re='(All done!|Task complete!|Over to you!|Good news!|Finished!)'
 
 # Speech runs in a detached background process, so every notifier invocation
 # must wait for its say output to land before the next run truncates the log;

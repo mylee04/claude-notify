@@ -2018,8 +2018,8 @@ case "$HOOK_TYPE" in
             "$TOOL_DISPLAY wrapped up" \
             -- \
             "All done! $TOOL_DISPLAY completed your task" \
-            "$TOOL_DISPLAY finished working on your request" \
-            "Task complete! $TOOL_DISPLAY is ready for your review" \
+            "Task complete! $TOOL_DISPLAY finished working on your request" \
+            "Over to you! $TOOL_DISPLAY completed your task and is standing by" \
             "Good news! $TOOL_DISPLAY is done and ready for you" \
             "Finished! $TOOL_DISPLAY wrapped up your request"
         SOUND="Glass"
