@@ -144,6 +144,7 @@ case "$cmd" in
                 seen="$seen$w "
                 pid=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_agent_pid" 2>/dev/null)
                 run=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_running" 2>/dev/null)
+                gen=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_run_gen" 2>/dev/null)
                 sp=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_settle_pane" 2>/dev/null)
                 iw=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_idle_watch" 2>/dev/null)
                 rp=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_resume_pending" 2>/dev/null)
@@ -154,8 +155,8 @@ case "$cmd" in
                 is=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_interrupt_since" 2>/dev/null)
                 bo=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_settle_badge_only" 2>/dev/null)
                 on=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_orig_name" 2>/dev/null)
-                printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
-                    "$w" "$pid" "$run" "$sp" "$iw" "$rp" "$dc" "$ds" "$ip" "$ifp" "$is" "$bo" "$on"
+                printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+                    "$w" "$pid" "$run" "$gen" "$sp" "$iw" "$rp" "$dc" "$ds" "$ip" "$ifp" "$is" "$bo" "$on"
             done
         elif [[ "$fmt" == *resume_pending* ]]; then
             # The resume poll pairs each pending epoch with the window's
@@ -210,6 +211,31 @@ case "$cmd" in
             printf '1' > "$FAKE_TMUX_STATE/${target}.@code_notify_settle_badge_only"
             exit 0
         fi
+        if [[ "${FAKE_TMUX_LATE_GEN_RACE_MARKER:-}" != "" ]] &&
+            [[ "${rest[0]}" == "@code_notify_run_gen" ]]; then
+            # The first read answers truthfully, so a synthetic child's
+            # start-up guard sees exactly the world it was scheduled against.
+            # Every later read is the successor's — modelling the user
+            # answering in the gap between that guard and the locked state
+            # change it is supposed to protect.
+            if [[ -e "$FAKE_TMUX_LATE_GEN_RACE_MARKER" ]]; then
+                printf '%s' "successor.gen"
+                exit 0
+            fi
+            : > "$FAKE_TMUX_LATE_GEN_RACE_MARKER"
+        fi
+        if [[ "${FAKE_TMUX_GEN_RACE_MARKER:-}" != "" ]] &&
+            [[ "${rest[0]}" == "@code_notify_running" ]] &&
+            [[ ! -e "$FAKE_TMUX_GEN_RACE_MARKER" ]]; then
+            # Model a successor turn starting in the SAME second as the run the
+            # sweep snapshotted, between that snapshot and this re-read. The
+            # epoch is byte-identical; only the generation tells them apart.
+            : > "$FAKE_TMUX_GEN_RACE_MARKER"
+            printf '%s' "successor.gen" \
+                > "$FAKE_TMUX_STATE/${target}.@code_notify_run_gen"
+            cat "$FAKE_TMUX_STATE/${target}.${rest[0]}" 2>/dev/null
+            exit 0
+        fi
         if [[ "${FAKE_TMUX_PAUSE_BADGE_SET:-}" == "1" ]] &&
             [[ "${rest[0]}" == "@code_notify_orig_name" ]]; then
             : > "$FAKE_TMUX_BADGE_SET_SIGNAL"
@@ -220,6 +246,19 @@ case "$cmd" in
     set-option)
         if (( unset_opt )); then
             rm -f "$FAKE_TMUX_STATE/${target}.${rest[0]}"
+            # Model a successor turn claiming the window in the instant a stop
+            # drops the running marker — the gap in which tmux_running_stop has
+            # released the transition lock and its caller has not yet re-taken
+            # it. Fires once, so the successor's own later stops behave.
+            if [[ -n "${FAKE_TMUX_SUCCESSOR_RACE_MARKER:-}" ]] &&
+                [[ "${rest[0]}" == "@code_notify_running" ]] &&
+                [[ ! -e "$FAKE_TMUX_SUCCESSOR_RACE_MARKER" ]]; then
+                : > "$FAKE_TMUX_SUCCESSOR_RACE_MARKER"
+                printf '%s' "$FAKE_TMUX_SUCCESSOR_RACE_EPOCH" \
+                    > "$FAKE_TMUX_STATE/${target}.@code_notify_running"
+                printf '%s' "successor.gen" \
+                    > "$FAKE_TMUX_STATE/${target}.@code_notify_run_gen"
+            fi
         else
             printf '%s' "${rest[1]}" > "$FAKE_TMUX_STATE/${target}.${rest[0]}"
         fi
@@ -2122,6 +2161,242 @@ rm -f "$state_dir/%3.pane_content" "$state_dir/@2.@code_notify_dialog_ctx" \
     "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
 pass "dialog watch goes inert once the running marker is down"
 
+# --- every start mints a run generation the epoch cannot provide ---
+# @code_notify_running is a 1-second epoch, so two turns inside one second are
+# indistinguishable by it — and these hooks fire well inside a second of each
+# other. The generation is what makes "still the run I saw" answerable.
+rm -f "$state_dir/@2.@code_notify_running" "$state_dir/@2.@code_notify_run_gen"
+tmux_running_start || fail "running-start for the generation test should succeed"
+gen_one="$(cat "$state_dir/@2.@code_notify_run_gen" 2>/dev/null)"
+[[ -n "$gen_one" ]] || fail "running-start should mint a run generation"
+tmux_running_stop || fail "running-stop for the generation test should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_run_gen" ]] \
+    || fail "a stop should retire the generation with the marker"
+tmux_prompt_submit || fail "prompt-submit for the generation test should succeed"
+gen_two="$(cat "$state_dir/@2.@code_notify_run_gen" 2>/dev/null)"
+[[ -n "$gen_two" ]] || fail "prompt-submit should mint a run generation"
+[[ "$gen_two" != "$gen_one" ]] \
+    || fail "a second turn must not reuse the previous generation"
+tmux_running_stop || fail "second running-stop for the generation test should succeed"
+tmux_running_resume_window "@2" || fail "resume-window for the generation test should succeed"
+gen_three="$(cat "$state_dir/@2.@code_notify_run_gen" 2>/dev/null)"
+[[ -n "$gen_three" ]] && [[ "$gen_three" != "$gen_two" ]] \
+    || fail "a poll resume should mint its own generation (got: $gen_three)"
+tmux_running_stop || fail "cleanup stop for the generation test should succeed"
+pass "each turn start mints a fresh run generation"
+
+# --- the synthetic-run guard rejects a world that moved on ---
+# A watch sweep validates a window, forks a notifier and disowns it; the child
+# only reaches delivery tens of milliseconds later. Everything it was scheduled
+# against must still hold, or the user's answer has already resumed the turn
+# and the child would tear that fresh run down.
+tmux_synthetic_guard_ok || fail "no guard window means no guard: a real hook must proceed"
+printf '%s' "$(date +%s)" > "$state_dir/@2.@code_notify_running"
+printf '%s' "gen-A" > "$state_dir/@2.@code_notify_run_gen"
+guard_run="$(cat "$state_dir/@2.@code_notify_running")"
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" CODE_NOTIFY_TMUX_GUARD_RUN="$guard_run" \
+    CODE_NOTIFY_TMUX_GUARD_GEN="gen-A" tmux_synthetic_guard_ok \
+    || fail "an unchanged run must pass the guard"
+printf '%s' "gen-B" > "$state_dir/@2.@code_notify_run_gen"
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" CODE_NOTIFY_TMUX_GUARD_RUN="$guard_run" \
+    CODE_NOTIFY_TMUX_GUARD_GEN="gen-A" tmux_synthetic_guard_ok \
+    && fail "REGRESSION: a same-second successor turn must fail the guard"
+printf '%s' "gen-A" > "$state_dir/@2.@code_notify_run_gen"
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" CODE_NOTIFY_TMUX_GUARD_RUN="$(( guard_run - 5 ))" \
+    CODE_NOTIFY_TMUX_GUARD_GEN="gen-A" tmux_synthetic_guard_ok \
+    && fail "a different running epoch must fail the guard"
+# An empty expected run is the post-completion idle nudge: it was scheduled
+# against a window with no live turn, and any turn since owns the window.
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" tmux_synthetic_guard_ok \
+    && fail "REGRESSION: a turn started since the fork must cancel the idle nudge"
+rm -f "$state_dir/@2.@code_notify_running" "$state_dir/@2.@code_notify_run_gen"
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" tmux_synthetic_guard_ok \
+    || fail "a still-idle window must let the idle nudge through"
+printf '%s' "$(( $(date +%s) - TMUX_RUNNING_TTL - 1 ))" > "$state_dir/@2.@code_notify_running"
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" tmux_synthetic_guard_ok \
+    || fail "a stale epoch is not a live turn and must not cancel the nudge"
+rm -f "$state_dir/@2.@code_notify_running"
+pass "synthetic-run guard admits the validated world and rejects a moved one"
+
+# --- both watches hand their child what they validated ---
+# Without this the child has no way to ask the question at all: it inherits the
+# pane and the agent name, and nothing that identifies the run.
+guard_env_log="$test_dir/guard-env.log"
+cat > "$fake_bin/guard-notifier-stub" <<EOF
+#!/bin/bash
+printf '%s|%s|%s\n' "\$CODE_NOTIFY_TMUX_GUARD_WINDOW" "\$CODE_NOTIFY_TMUX_GUARD_RUN" \
+    "\$CODE_NOTIFY_TMUX_GUARD_GEN" >> "$guard_env_log"
+EOF
+chmod +x "$fake_bin/guard-notifier-stub"
+wait_for_guard_log() {
+    local i
+    for i in $(seq 1 50); do
+        [[ -s "$guard_env_log" ]] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+printf '%s' "idle_prompt|permission_prompt" > "$HOME/.claude/notifications/notify-types"
+: > "$guard_env_log"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/guard-notifier-stub" \
+    tmux_dialog_watch_notify "%3" antigravity projX "@2" "1700000000" "gen-A" \
+    || fail "dialog watch notify should succeed"
+wait_for_guard_log || fail "the dialog watch should invoke the notifier"
+[[ "$(cat "$guard_env_log")" == "@2|1700000000|gen-A" ]] \
+    || fail "the dialog child should carry window, epoch and generation (got: $(cat "$guard_env_log"))"
+: > "$guard_env_log"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/guard-notifier-stub" \
+    tmux_idle_watch_notify "%3" codex projX "@2" \
+    || fail "idle watch notify should succeed"
+wait_for_guard_log || fail "the idle watch should invoke the notifier"
+[[ "$(cat "$guard_env_log")" == "@2||" ]] \
+    || fail "the idle child should carry its window and no expected run (got: $(cat "$guard_env_log"))"
+rm -f "$HOME/.claude/notifications/notify-types"
+pass "detached watch children carry the state their sweep validated"
+
+# --- the sighting is validated against the snapshot, not against itself ---
+# The generation the child checks must be the one the dialog was SEEN under.
+# Re-reading it at spawn time would be circular: a successor starting in the
+# same second leaves the epoch byte-identical, so the sweep would hand the
+# child the successor's own generation and the child would dutifully confirm
+# it — delivering a stale approval against a turn that never had a dialog.
+for opt_name in @code_notify_running @code_notify_run_gen @code_notify_dialog_ctx \
+    @code_notify_dialog_since; do
+    rm -f "$state_dir/@2.$opt_name"
+done
+printf '%s' "idle_prompt|permission_prompt" > "$HOME/.claude/notifications/notify-types"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_start \
+    || fail "running-start for the same-second successor test should succeed"
+printf '%s' "$agy_file_dialog" > "$state_dir/%3.pane_content"
+printf '%s' "$(( $(date +%s) - TMUX_DIALOG_NOTIFY_SECONDS - 1 ))" \
+    > "$state_dir/@2.@code_notify_dialog_since"
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+: > "$guard_env_log"
+gen_race_marker="$test_dir/dialog-gen-race"
+rm -f "$gen_race_marker"
+FAKE_TMUX_GEN_RACE_MARKER="$gen_race_marker" \
+    CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/guard-notifier-stub" tmux_agent_exit_sweep \
+    || fail "a sweep racing a same-second successor should succeed"
+[[ -e "$gen_race_marker" ]] \
+    || fail "precondition: the same-second successor race should have fired"
+sleep 0.3
+[[ ! -s "$guard_env_log" ]] \
+    || fail "REGRESSION: a same-second successor was handed its own generation (got: $(cat "$guard_env_log"))"
+# The control: unraced, the sighting fires and carries the snapshot pair.
+printf '%s' "$(( $(date +%s) - TMUX_DIALOG_NOTIFY_SECONDS - 1 ))" \
+    > "$state_dir/@2.@code_notify_dialog_since"
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+: > "$guard_env_log"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/guard-notifier-stub" tmux_agent_exit_sweep \
+    || fail "an unraced dialog sweep should succeed"
+wait_for_guard_log || fail "an unraced sighting should invoke the notifier"
+[[ "$(cat "$guard_env_log")" == "@2|$(cat "$state_dir/@2.@code_notify_running")|$(cat "$state_dir/@2.@code_notify_run_gen")" ]] \
+    || fail "the child should carry the observed run pair (got: $(cat "$guard_env_log"))"
+tmux_running_stop || fail "cleanup stop for the same-second successor test should succeed"
+rm -f "$state_dir/@2.@code_notify_dialog_ctx" "$state_dir/@2.@code_notify_dialog_since" \
+    "$state_dir/%3.pane_content" "$HOME/.claude/notifications/notify-types" \
+    "$state_dir/.@code_notify_agent_exit_sweep_scheduled" "$gen_race_marker"
+pass "a same-second successor cancels the sighting instead of relabelling it"
+
+# --- the guard is re-asked under the lock, not just at start-up ---
+# A whole notifier run separates the start-up guard from the state change it
+# protects, and the user can answer the dialog anywhere in it. The teardown
+# must therefore re-ask under the transition lock — where nothing can move
+# between the answer and the mutation — and reject there.
+for opt_name in @code_notify_running @code_notify_run_gen @code_notify_resume_pending \
+    @code_notify_pause_fp; do
+    rm -f "$state_dir/@2.$opt_name"
+done
+tmux_running_start || fail "running-start for the locked-guard test should succeed"
+locked_epoch="$(cat "$state_dir/@2.@code_notify_running")"
+locked_gen="$(cat "$state_dir/@2.@code_notify_run_gen")"
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" CODE_NOTIFY_TMUX_GUARD_RUN="$locked_epoch" \
+    CODE_NOTIFY_TMUX_GUARD_GEN="stale-generation" \
+    tmux_running_pause_for_input watch \
+    || fail "a rejected guarded pause should still succeed"
+[[ "${TMUX_RUNNING_GUARD_REJECTED:-0}" == "1" ]] \
+    || fail "the locked re-check should report its rejection to the notifier"
+[[ "$(cat "$state_dir/@2.@code_notify_running" 2>/dev/null)" == "$locked_epoch" ]] \
+    || fail "REGRESSION: a rejected guarded child tore down the run it did not own"
+[[ ! -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "REGRESSION: a rejected guarded child parked a pause on someone else's turn"
+# A guard naming another window is not this window's business either.
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@9" CODE_NOTIFY_TMUX_GUARD_RUN="$locked_epoch" \
+    CODE_NOTIFY_TMUX_GUARD_GEN="$locked_gen" tmux_running_stop \
+    || fail "a foreign-window guarded stop should succeed"
+[[ "${TMUX_RUNNING_GUARD_REJECTED:-0}" == "1" ]] \
+    || fail "a guard naming another window must fail closed"
+[[ "$(cat "$state_dir/@2.@code_notify_running" 2>/dev/null)" == "$locked_epoch" ]] \
+    || fail "a guard naming another window must not touch this one"
+# The control: the guard still holding lets the pause through, and an
+# unguarded hook is never affected by any of this.
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" CODE_NOTIFY_TMUX_GUARD_RUN="$locked_epoch" \
+    CODE_NOTIFY_TMUX_GUARD_GEN="$locked_gen" tmux_running_pause_for_input watch \
+    || fail "an in-date guarded pause should succeed"
+[[ "${TMUX_RUNNING_GUARD_REJECTED:-0}" == "0" ]] \
+    || fail "an in-date guard must not report a rejection"
+[[ ! -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "an in-date guarded child should retire the run it owns"
+[[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "an in-date guarded child should park its pause"
+rm -f "$state_dir/@2.@code_notify_resume_pending" "$state_dir/@2.@code_notify_pause_fp" \
+    "$state_dir/.@code_notify_resume_poll_scheduled"
+tmux_resume_flag_clear "@2"
+tmux_running_start || fail "running-start for the unguarded control should succeed"
+tmux_running_pause_for_input || fail "an unguarded pause should succeed"
+[[ "${TMUX_RUNNING_GUARD_REJECTED:-0}" == "0" ]] \
+    || fail "an unguarded hook must never be rejected"
+[[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "an unguarded pause should park its wait"
+rm -f "$state_dir/@2.@code_notify_resume_pending" "$state_dir/@2.@code_notify_pause_fp"
+tmux_resume_flag_clear "@2"
+pass "the synthetic guard is re-checked under the transition lock"
+
+# --- an input pause must not resurrect state a successor turn cleared ---
+# tmux_running_stop releases the transition lock before returning, so a queued
+# prompt can claim the window before the pause writes its metadata. Unlocked,
+# those writes land on the successor's live turn: a running window carrying a
+# pending pause, and a resume poll watching a pane nothing is waiting on.
+for opt_name in @code_notify_running @code_notify_run_gen @code_notify_resume_pending \
+    @code_notify_pause_fp @code_notify_queued_prompt; do
+    rm -f "$state_dir/@2.$opt_name"
+done
+printf '%s' "approval dialog" > "$state_dir/%3.pane_content"
+rm -f "$state_dir/.@code_notify_resume_poll_scheduled"
+tmux_running_start || fail "running-start before the pause race should succeed"
+successor_marker="$test_dir/pause-successor-race"
+rm -f "$successor_marker"
+FAKE_TMUX_SUCCESSOR_RACE_MARKER="$successor_marker" \
+    FAKE_TMUX_SUCCESSOR_RACE_EPOCH="$(date +%s)" \
+    tmux_running_pause_for_input watch \
+    || fail "a pause overtaken by a successor should still succeed"
+[[ -e "$successor_marker" ]] || fail "precondition: the successor race should have fired"
+[[ "$(cat "$state_dir/@2.@code_notify_running" 2>/dev/null)" =~ ^[0-9]+$ ]] \
+    || fail "REGRESSION: the pause must leave the successor turn's marker alone"
+[[ ! -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "REGRESSION: the pause must not park a wait on a live successor turn"
+[[ ! -f "$state_dir/@2.@code_notify_pause_fp" ]] \
+    || fail "REGRESSION: the pause must not arm a resume watch on a live successor turn"
+[[ ! -f "$state_dir/.@code_notify_resume_poll_scheduled" ]] \
+    || fail "REGRESSION: an overtaken pause must not schedule the resume poll"
+[[ ! -e "$(tmux_resume_flag_path "@2")" ]] \
+    || fail "REGRESSION: an overtaken pause must not leave a resume flag file"
+# The control: with no successor, the identical call parks the whole pause.
+rm -f "$state_dir/@2.@code_notify_running" "$state_dir/@2.@code_notify_run_gen"
+tmux_running_start || fail "running-start before the pause control should succeed"
+tmux_running_pause_for_input watch || fail "an unraced pause should succeed"
+[[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "an unraced pause should park the wait"
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp" 2>/dev/null)" == "%3" ]] \
+    || fail "an unraced pause should record the watched pane"
+[[ -f "$state_dir/.@code_notify_resume_poll_scheduled" ]] \
+    || fail "an unraced watched pause should schedule the resume poll"
+rm -f "$state_dir/@2.@code_notify_resume_pending" "$state_dir/@2.@code_notify_pause_fp" \
+    "$state_dir/.@code_notify_resume_poll_scheduled" "$state_dir/%3.pane_content" \
+    "$successor_marker"
+tmux_resume_flag_clear "@2"
+pass "an overtaken input pause leaves the successor turn intact"
+
 # --- a preserved queued-prompt hint self-heals when no successor runs ---
 # A FALSE hint (a marker lingering from an interrupted turn, which emits no
 # Stop) makes a claude turn's only Stop consume the hint and preserve the
@@ -3067,6 +3342,131 @@ EOF
         "$state_dir/.window-status-current-format" 2>/dev/null || true
     printf '%s' "zsh" > "$state_dir/@2.window_name"
     pass "notifier end-to-end: focus repaint keeps the unanswered permission badge"
+
+    # A pause releases the transition lock before this run reaches its badge,
+    # so a queued prompt can re-light the window in between. The stale waiting
+    # badge must not land on that successor turn's live indicator — the "stale
+    # 💬 over a running window" report. The desktop alert still goes out: the
+    # dialog is real, only the tmux rendering belongs to someone else now.
+    rm -f "$state_dir"/* "$HOME/.claude/notifications/state"/* 2>/dev/null || true
+    printf '%s' "zsh" > "$state_dir/@2.window_name"
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+        PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        bash "$NOTIFIER" UserPromptSubmit claude testproj > /dev/null 2>&1 \
+        || fail "prompt-submit before the badge race should exit cleanly"
+    [[ "$(window_name)" == "🌕 zsh" ]] \
+        || fail "precondition: the running badge should be up (got: $(window_name))"
+    : > "$tn_log"
+    e2e_race_marker="$test_dir/e2e-successor-race"
+    rm -f "$e2e_race_marker"
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+        CODE_NOTIFY_NOTIFICATION_RATE_LIMIT_SECONDS=0 \
+        FAKE_TMUX_SUCCESSOR_RACE_MARKER="$e2e_race_marker" \
+        FAKE_TMUX_SUCCESSOR_RACE_EPOCH="$(date +%s)" \
+        PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        bash "$NOTIFIER" notification claude testproj > /dev/null 2>&1 \
+        <<< '{"message": "Claude needs your permission to use Bash"}' \
+        || fail "notifier.sh permission request racing a successor should exit cleanly"
+    [[ -e "$e2e_race_marker" ]] || fail "precondition: the successor race should have fired"
+    [[ "$(cat "$state_dir/@2.@code_notify_running" 2>/dev/null)" =~ ^[0-9]+$ ]] \
+        || fail "the successor turn's marker should still be up"
+    [[ "$(window_name)" != "💬 zsh" ]] \
+        || fail "REGRESSION: the waiting badge landed on the successor turn's live window"
+    [[ ! -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+        || fail "REGRESSION: the pause parked a wait on the successor turn"
+    [[ -s "$tn_log" ]] || fail "the permission alert itself should still be delivered"
+    # The control: unraced, the same event badges and pauses as always.
+    rm -f "$HOME/.claude/notifications/state"/* 2>/dev/null || true
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+        CODE_NOTIFY_NOTIFICATION_RATE_LIMIT_SECONDS=0 \
+        PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        bash "$NOTIFIER" notification claude testproj > /dev/null 2>&1 \
+        <<< '{"message": "Claude needs your permission to use Bash"}' \
+        || fail "notifier.sh unraced permission request should exit cleanly"
+    [[ "$(window_name)" == "💬 zsh" ]] \
+        || fail "an unraced permission request should badge the waiting window (got: $(window_name))"
+    [[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+        || fail "an unraced permission request should park the wait"
+    pass "notifier end-to-end: a stale waiting badge stays off a successor turn"
+
+    # A watch's detached child is scheduled against a validated world it can
+    # only re-check at delivery. When the user answered in between and the poll
+    # resumed the turn, the child must exit before its pause tears that turn
+    # back down and before its toast fires for a dialog already dealt with.
+    rm -f "$state_dir"/* "$HOME/.claude/notifications/state"/* 2>/dev/null || true
+    printf '%s' "zsh" > "$state_dir/@2.window_name"
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+        PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        bash "$NOTIFIER" UserPromptSubmit claude testproj > /dev/null 2>&1 \
+        || fail "prompt-submit before the guarded-child test should exit cleanly"
+    guard_epoch="$(cat "$state_dir/@2.@code_notify_running")"
+    guard_gen="$(cat "$state_dir/@2.@code_notify_run_gen")"
+    [[ -n "$guard_gen" ]] || fail "precondition: the turn should carry a generation"
+    : > "$tn_log"
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+        CODE_NOTIFY_NOTIFICATION_RATE_LIMIT_SECONDS=0 \
+        CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" CODE_NOTIFY_TMUX_GUARD_RUN="$guard_epoch" \
+        CODE_NOTIFY_TMUX_GUARD_GEN="stale-generation" \
+        PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        bash "$NOTIFIER" notification claude testproj > /dev/null 2>&1 \
+        <<< '{"message": "Claude needs your permission to use Bash"}' \
+        || fail "an overtaken synthetic child should exit cleanly"
+    [[ ! -s "$tn_log" ]] \
+        || fail "REGRESSION: an overtaken synthetic child delivered its stale alert"
+    [[ "$(cat "$state_dir/@2.@code_notify_running" 2>/dev/null)" == "$guard_epoch" ]] \
+        || fail "REGRESSION: an overtaken synthetic child tore down the resumed turn"
+    [[ "$(window_name)" == "🌕 zsh" ]] \
+        || fail "REGRESSION: an overtaken synthetic child repainted the window (got: $(window_name))"
+    # The control: with the world unchanged, the same child delivers normally.
+    rm -f "$HOME/.claude/notifications/state"/* 2>/dev/null || true
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+        CODE_NOTIFY_NOTIFICATION_RATE_LIMIT_SECONDS=0 \
+        CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" CODE_NOTIFY_TMUX_GUARD_RUN="$guard_epoch" \
+        CODE_NOTIFY_TMUX_GUARD_GEN="$guard_gen" \
+        PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        bash "$NOTIFIER" notification claude testproj > /dev/null 2>&1 \
+        || fail "an in-date synthetic child should exit cleanly"
+    [[ -s "$tn_log" ]] || fail "an in-date synthetic child should deliver its alert"
+    [[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+        || fail "an in-date synthetic child should park its pause"
+    pass "notifier end-to-end: an overtaken watch child delivers nothing"
+
+    # The narrow window the start-up guard cannot cover: it passes, then a
+    # whole notifier run happens — config, snooze, rate limiting, sound — and
+    # the user answers somewhere inside it, the poll minting the successor.
+    # Only the re-check under the transition lock sees that.
+    rm -f "$state_dir"/* "$HOME/.claude/notifications/state"/* 2>/dev/null || true
+    printf '%s' "zsh" > "$state_dir/@2.window_name"
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+        PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        bash "$NOTIFIER" UserPromptSubmit claude testproj > /dev/null 2>&1 \
+        || fail "prompt-submit before the late-race test should exit cleanly"
+    late_epoch="$(cat "$state_dir/@2.@code_notify_running")"
+    late_gen="$(cat "$state_dir/@2.@code_notify_run_gen")"
+    late_race_marker="$test_dir/late-gen-race"
+    rm -f "$late_race_marker"
+    : > "$tn_log"
+    CODE_NOTIFY_TAIL_SYNC=1 CODE_NOTIFY_SKIP_USAGE_CHECK=1 \
+        CODE_NOTIFY_NOTIFICATION_RATE_LIMIT_SECONDS=0 \
+        CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" CODE_NOTIFY_TMUX_GUARD_RUN="$late_epoch" \
+        CODE_NOTIFY_TMUX_GUARD_GEN="$late_gen" \
+        FAKE_TMUX_LATE_GEN_RACE_MARKER="$late_race_marker" \
+        PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        bash "$NOTIFIER" notification claude testproj > /dev/null 2>&1 \
+        <<< '{"message": "Claude needs your permission to use Bash"}' \
+        || fail "a child overtaken mid-run should exit cleanly"
+    [[ -e "$late_race_marker" ]] \
+        || fail "precondition: the start-up guard should have read the truthful generation"
+    [[ ! -s "$tn_log" ]] \
+        || fail "REGRESSION: a child overtaken after its start-up guard still delivered"
+    [[ "$(cat "$state_dir/@2.@code_notify_running" 2>/dev/null)" == "$late_epoch" ]] \
+        || fail "REGRESSION: a child overtaken after its start-up guard stopped the successor"
+    [[ ! -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+        || fail "REGRESSION: a child overtaken after its start-up guard parked a pause"
+    [[ "$(window_name)" == "🌕 zsh" ]] \
+        || fail "REGRESSION: a child overtaken after its start-up guard repainted the window (got: $(window_name))"
+    rm -f "$late_race_marker"
+    pass "notifier end-to-end: a child overtaken mid-run is stopped at the lock"
 
     # Codex reaches the notifier via its hooks.json as `notifier.sh stop codex`,
     # so RAW_ARG1 is "stop" and only TOOL_NAME is "codex". With no

@@ -91,6 +91,19 @@ source "$NOTIFIER_DIR/../utils/tmux.sh"
 source "$NOTIFIER_DIR/../utils/snooze.sh"
 source "$NOTIFIER_DIR/../utils/persist.sh"
 
+# A synthetic run spawned by one of the tmux watches (idle nudge, approval
+# dialog) may have been overtaken between its fork and this line — the user
+# answers, the turn resumes, and this process would tear that fresh run down
+# and toast about a dialog already dealt with. The scheduler passed in what it
+# validated; bail before any state change or delivery if it no longer holds.
+# Both conditions are required so a run without the guard env — every real
+# hook — is never affected, even if tmux.sh failed to define the helper.
+if [[ -n "${CODE_NOTIFY_TMUX_GUARD_WINDOW:-}" ]] &&
+    declare -f tmux_synthetic_guard_ok > /dev/null 2>&1 &&
+    ! tmux_synthetic_guard_ok 2>/dev/null; then
+    exit 0
+fi
+
 has_jq() {
     command -v jq >/dev/null 2>&1
 }
@@ -1835,12 +1848,20 @@ case "$HOOK_TYPE" in
                 tmux_running_pause_for_input 2>/dev/null || true
                 ;;
         esac
+        # Every subtype above took the indicator down, and each releases the
+        # transition lock before this run reaches its badge — so the same
+        # queued-successor race the terminal events guard against applies here
+        # (see TMUX_BADGE_RUNNING_GUARD below). Mid-run events reach this file
+        # under a different hook type; they leave the marker alone and must
+        # keep badging a running window.
+        TMUX_BADGE_RUNNING_GUARD=1
         ;;
     "PreToolUse")
         # The managed Claude AskUserQuestion hook uses this event. Once its
         # answer is supplied, PostToolUse (or the following PreToolUse) resumes
         # the same turn without a UserPromptSubmit event.
         tmux_running_pause_for_input 2>/dev/null || true
+        TMUX_BADGE_RUNNING_GUARD=1
         ;;
     "StopFailure")
         # The usage limit ended the turn mid-task. Pause rather than stop: the
@@ -1849,6 +1870,7 @@ case "$HOOK_TYPE" in
         # resume-pending marker. No pane watch — repaints of the limit dialog
         # or its countdown must not be mistaken for the turn resuming.
         tmux_running_pause_for_input 2>/dev/null || true
+        TMUX_BADGE_RUNNING_GUARD=1
         ;;
     "stop"|"error"|"failed")
         if [[ "$AGY_STOP_FINAL_CLEANUP" != "1" ]]; then
@@ -1867,7 +1889,7 @@ case "$HOOK_TYPE" in
             # Only this queued-prompt path shares its running state with
             # UserPromptSubmit. Antigravity performs separate cleanup and
             # must still receive its normal terminal badge.
-            TMUX_TERMINAL_BADGE_GUARD=1
+            TMUX_BADGE_RUNNING_GUARD=1
         fi
         # Codex and Antigravity send nothing further once a turn ends —
         # there is no equivalent of Claude's native idle_prompt reminder —
@@ -1889,6 +1911,18 @@ case "$HOOK_TYPE" in
         fi
         ;;
 esac
+
+# The locked re-check inside that transition rejected this run: it is a
+# synthetic child of a tmux watch, and the run it was scheduled against was
+# retired or replaced while this process was starting up. Nothing was changed
+# above, and nothing may be delivered below — the alert describes a dialog the
+# user has already dealt with. The start-up guard catches most of these; this
+# is the one that cannot be raced, because it was answered under the same lock
+# that guards the state change. Rate limiting is deliberately left unstamped:
+# no alert went out, so none was consumed.
+if [[ "${TMUX_RUNNING_GUARD_REJECTED:-0}" == "1" ]]; then
+    exit 0
+fi
 
 # Check if notification should be suppressed. "error" is included so that the
 # kill switch (cn off) and snooze silence failure alerts too — they are still
@@ -2576,7 +2610,11 @@ if [[ -n "$BADGE_ICON" ]] && [[ "${TMUX_RUNNING_STOP_PRESERVED:-0}" != "1" ]]; t
     if tmux_badge_visible_enabled; then
         BADGE_VISIBLE_ACTION="apply"
     fi
-    if [[ "${TMUX_TERMINAL_BADGE_GUARD:-0}" == "1" ]]; then
+    # Set by every event that retired this window's running marker above. Each
+    # of those released the transition lock before delivery got here, so a
+    # queued prompt can have re-lit the window in between — and this badge must
+    # not land on top of the successor turn's live indicator.
+    if [[ "${TMUX_BADGE_RUNNING_GUARD:-0}" == "1" ]]; then
         tmux_badge_set_unless_running \
             "$BADGE_ICON" "$BADGE_CLEAR_MODE" "" "$BADGE_VISIBLE_ACTION" 2>/dev/null || true
     else

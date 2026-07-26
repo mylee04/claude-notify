@@ -1070,6 +1070,60 @@ tmux_idle_watch_disarm() {
     tmux set-option -wu -t "$1" @code_notify_idle_watch 2>/dev/null
 }
 
+# Gate a detached synthetic notifier run on the state its scheduler validated.
+# The sweep checks a window, forks a notifier and disowns it — but a fork is
+# not a delivery: a bash startup plus this library's sourcing is easily tens of
+# milliseconds, and in that gap the user can answer the dialog and the resume
+# poll can light a fresh turn. The child would then drive the full pipeline
+# against a run it never observed: its input pause takes the new indicator back
+# down and a "needs your approval" toast fires for a dialog already dealt with.
+# So the scheduler hands the child what it saw and the child re-checks it here,
+# before any state change or delivery.
+#
+# CODE_NOTIFY_TMUX_GUARD_RUN carries the running epoch, GUARD_GEN the run
+# generation beside it (the epoch alone cannot survive two turns in one second,
+# which is exactly the interval these hooks fire in). An empty GUARD_RUN means
+# the scheduler saw a window with no live run — the post-completion idle nudge,
+# whose only requirement is that no turn has claimed the window since. Absent
+# GUARD_WINDOW there is no guard: an ordinary hook-driven run always proceeds.
+tmux_synthetic_guard_ok() {
+    local window_id="${CODE_NOTIFY_TMUX_GUARD_WINDOW:-}"
+    [[ -n "$window_id" ]] || return 0
+    { [[ -n "${TMUX:-}" ]] && command -v tmux &> /dev/null; } || return 0
+    [[ "$window_id" =~ ^@[0-9]+$ ]] || return 0
+    local want_run="${CODE_NOTIFY_TMUX_GUARD_RUN:-}" run gen now
+    run=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
+    if [[ -z "$want_run" ]]; then
+        now=$(date +%s)
+        [[ "$run" =~ ^[0-9]+$ ]] && (( now - run < TMUX_RUNNING_TTL )) && return 1
+        return 0
+    fi
+    [[ "$run" == "$want_run" ]] || return 1
+    gen=$(tmux show-options -wqv -t "$window_id" @code_notify_run_gen 2>/dev/null)
+    [[ "$gen" == "${CODE_NOTIFY_TMUX_GUARD_GEN:-}" ]]
+}
+
+# The same comparison, made while the caller holds the window's transition
+# lock. The start-up call above is only a filter: a whole notifier run —
+# config, snooze, rate limiting, sound resolution — happens between it and the
+# state change it is meant to protect, and the user can answer the dialog in
+# any of those milliseconds. Re-asking here is what makes it a check-and-act
+# pair: nothing can move between this answer and the mutation that follows.
+#
+# Only meaningful BEFORE the guarded run is consumed. Once the stop has cleared
+# the marker the guard necessarily fails, so paths that continue past their own
+# teardown (the pause metadata below) must fall back to the ordinary
+# "did someone else claim this window" test instead of re-asking this.
+tmux_running_guard_admits_locked() {
+    local window_id="$1"
+    [[ -n "${CODE_NOTIFY_TMUX_GUARD_WINDOW:-}" ]] || return 0
+    # The pane this child inherited now lives in a different window than the
+    # sweep validated, so nothing here is the run it was scheduled against.
+    # Fail closed: a dropped synthetic alert beats one aimed at a stranger.
+    [[ "$CODE_NOTIFY_TMUX_GUARD_WINDOW" == "$window_id" ]] || return 1
+    tmux_synthetic_guard_ok
+}
+
 # Deliver the synthetic idle reminder through the real notifier so it
 # inherits the whole idle_prompt pipeline — the 🥱 title and badge, sounds,
 # per-subtype rate limiting, snooze, and the kill switch. Unlike a native
@@ -1078,13 +1132,17 @@ tmux_idle_watch_disarm() {
 # still marked visible: 🥱 must replace the earlier 🟢. TMUX_PANE targets the
 # watched pane; detached delivery keeps a persistent alert from blocking the
 # sweep tick. CODE_NOTIFY_NOTIFIER_PATH exists for tests to substitute a stub.
+# $4 (the watched window) arms the overtake guard in the detached child: the
+# turn is over, so any run claiming the window between this fork and delivery
+# means the user is back and the nudge is moot.
 tmux_idle_watch_notify() {
-    local pane_id="$1" agent="$2" project="$3" notifier
+    local pane_id="$1" agent="$2" project="$3" window_id="${4:-}" notifier
     tmux_idle_prompt_enabled || return 0
     notifier="${CODE_NOTIFY_NOTIFIER_PATH:-${TMUX_BADGE_LIB_PATH%/*}/../core/notifier.sh}"
     [[ -f "$notifier" ]] || return 0
     ( printf '%s' '{"type":"idle_prompt"}' \
         | CODE_NOTIFY_TMUX_BADGE_VISIBLE=true TMUX_PANE="$pane_id" \
+          CODE_NOTIFY_TMUX_GUARD_WINDOW="$window_id" \
           bash "$notifier" notification "$agent" "$project" ) >/dev/null 2>&1 &
     disown 2>/dev/null || true
     return 0
@@ -1098,13 +1156,20 @@ tmux_idle_watch_notify() {
 # TMUX_PANE targets the watched pane; detached delivery keeps a persistent
 # alert from blocking the sweep tick. CODE_NOTIFY_NOTIFIER_PATH exists for
 # tests to substitute a stub.
+# $4-$6 (window, running epoch, run generation) arm the overtake guard in the
+# detached child: answering the dialog resumes the turn through the poll, and
+# that resumed run must not be torn down by an alert for the dialog it just
+# retired.
 tmux_dialog_watch_notify() {
     local pane_id="$1" agent="$2" project="$3" notifier
+    local window_id="${4:-}" run="${5:-}" gen="${6:-}"
     tmux_permission_prompt_enabled || return 0
     notifier="${CODE_NOTIFY_NOTIFIER_PATH:-${TMUX_BADGE_LIB_PATH%/*}/../core/notifier.sh}"
     [[ -f "$notifier" ]] || return 0
     ( printf '%s' '{"type":"permission_prompt"}' \
-        | TMUX_PANE="$pane_id" bash "$notifier" notification "$agent" "$project" ) >/dev/null 2>&1 &
+        | TMUX_PANE="$pane_id" CODE_NOTIFY_TMUX_GUARD_WINDOW="$window_id" \
+          CODE_NOTIFY_TMUX_GUARD_RUN="$run" CODE_NOTIFY_TMUX_GUARD_GEN="$gen" \
+          bash "$notifier" notification "$agent" "$project" ) >/dev/null 2>&1 &
     disown 2>/dev/null || true
     return 0
 }
@@ -1257,16 +1322,16 @@ tmux_agent_exit_schedule_sweep() {
 
 tmux_agent_exit_sweep() {
     { [[ -n "${TMUX:-}" ]] && command -v tmux &> /dev/null; } || return 0
-    local now window_id pid since settle_pane idle_watch resume orig live=0
+    local now window_id pid since gen settle_pane idle_watch resume orig live=0
     local fp_now fp_prev settle_since settle_ctx settle_badge_only mode transition_lock transition_token
-    local current_pid current_since current_settle_since current_badge_only
+    local current_pid current_since current_settle_since current_badge_only current_gen
     local ipane isince ifp1 ifp2 istate iagent iproject
     local dialog_ctx dialog_since dpane dagent dproject dialog_content
     local interrupt_pane interrupt_fp interrupt_since interrupt_content
     now=$(date +%s)
     # orig (the badge marker) reads last: it is the only field that may embed
     # "|" (a window name), and read folds any remainder into the final var.
-    while IFS='|' read -r window_id pid since settle_pane idle_watch resume dialog_ctx dialog_since interrupt_pane interrupt_fp interrupt_since settle_badge_only orig; do
+    while IFS='|' read -r window_id pid since gen settle_pane idle_watch resume dialog_ctx dialog_since interrupt_pane interrupt_fp interrupt_since settle_badge_only orig; do
         [[ "$window_id" =~ ^@[0-9]+$ ]] || continue
         # list-windows emits every window, with empty fields when the options
         # are unset. Windows that are neither PID-tracked nor settle-watched
@@ -1300,6 +1365,7 @@ tmux_agent_exit_sweep() {
                 current_pid=$(tmux show-options -wqv -t "$window_id" @code_notify_agent_pid 2>/dev/null)
                 if [[ "$current_pid" == "$pid" ]]; then
                     tmux set-option -wu -t "$window_id" @code_notify_running 2>/dev/null
+                    tmux_running_gen_clear "$window_id"
                     tmux set-option -wu -t "$window_id" @code_notify_resume_pending 2>/dev/null
                     tmux_resume_flag_clear "$window_id"
                     tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
@@ -1350,7 +1416,7 @@ tmux_agent_exit_sweep() {
                     tmux_idle_watch_disarm "$window_id"
                 elif (( now - isince >= TMUX_IDLE_SECONDS )); then
                     tmux_idle_watch_disarm "$window_id"
-                    tmux_idle_watch_notify "$ipane" "$iagent" "$iproject"
+                    tmux_idle_watch_notify "$ipane" "$iagent" "$iproject" "$window_id"
                 else
                     live=1
                 fi
@@ -1391,10 +1457,19 @@ tmux_agent_exit_sweep() {
                                 @code_notify_dialog_since 2>/dev/null
                             # A turn transition between the snapshot and now
                             # owns the window's state; a stale sighting must
-                            # not toast over it.
+                            # not toast over it. Both halves are compared
+                            # against the SNAPSHOT: re-reading the generation
+                            # here and passing that would be circular — a
+                            # successor starting in the same second leaves the
+                            # epoch matching, and the child would then dutifully
+                            # validate the successor's own generation. The
+                            # snapshot pair is what the sighting was observed
+                            # under, so it is what travels into the child.
                             current_since=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
-                            if [[ "$current_since" == "$since" ]]; then
-                                tmux_dialog_watch_notify "$dpane" "$dagent" "$dproject"
+                            current_gen=$(tmux show-options -wqv -t "$window_id" @code_notify_run_gen 2>/dev/null)
+                            if [[ "$current_since" == "$since" ]] && [[ "$current_gen" == "$gen" ]]; then
+                                tmux_dialog_watch_notify "$dpane" "$dagent" "$dproject" \
+                                    "$window_id" "$since" "$gen"
                             fi
                         fi
                     elif [[ -n "$dialog_since" ]]; then
@@ -1453,6 +1528,7 @@ tmux_agent_exit_sweep() {
                         current_badge_only=$(tmux show-options -wqv -t "$window_id" @code_notify_settle_badge_only 2>/dev/null)
                         if [[ "$current_since" == "$since" ]] && [[ -z "$current_badge_only" ]]; then
                             tmux set-option -wu -t "$window_id" @code_notify_running 2>/dev/null
+                            tmux_running_gen_clear "$window_id"
                             tmux_running_settle_disarm "$window_id"
                             tmux_running_dialog_disarm "$window_id"
                             # Before the disarm drops the recorded path.
@@ -1527,6 +1603,7 @@ tmux_agent_exit_sweep() {
         settle_ctx=$(tmux show-options -wqv -t "$window_id" @code_notify_settle_ctx 2>/dev/null)
         settle_badge_only=$(tmux show-options -wqv -t "$window_id" @code_notify_settle_badge_only 2>/dev/null)
         tmux set-option -wu -t "$window_id" @code_notify_running 2>/dev/null
+        tmux_running_gen_clear "$window_id"
         tmux_running_settle_disarm "$window_id"
         mode=$(tmux show-options -wqv -t "$window_id" @code_notify_clear_mode 2>/dev/null)
         if [[ "$mode" == "running" ]]; then
@@ -1553,7 +1630,7 @@ tmux_agent_exit_sweep() {
             tmux set-option -w -t "$window_id" @code_notify_agent_pid "$pid" 2>/dev/null
         fi
     done < <(tmux list-windows -a -F \
-        '#{window_id}|#{@code_notify_agent_pid}|#{@code_notify_running}|#{@code_notify_settle_pane}|#{@code_notify_idle_watch}|#{@code_notify_resume_pending}|#{@code_notify_dialog_ctx}|#{@code_notify_dialog_since}|#{@code_notify_interrupt_pane}|#{@code_notify_interrupt_fp}|#{@code_notify_interrupt_since}|#{@code_notify_settle_badge_only}|#{@code_notify_orig_name}' 2>/dev/null)
+        '#{window_id}|#{@code_notify_agent_pid}|#{@code_notify_running}|#{@code_notify_run_gen}|#{@code_notify_settle_pane}|#{@code_notify_idle_watch}|#{@code_notify_resume_pending}|#{@code_notify_dialog_ctx}|#{@code_notify_dialog_since}|#{@code_notify_interrupt_pane}|#{@code_notify_interrupt_fp}|#{@code_notify_interrupt_since}|#{@code_notify_settle_badge_only}|#{@code_notify_orig_name}' 2>/dev/null)
     if [[ "$live" -eq 1 ]]; then
         tmux_agent_exit_schedule_sweep
     fi
@@ -1772,6 +1849,26 @@ tmux_spinner_disarm_if_idle() {
     return 0
 }
 
+# A run generation: one value unique to a single turn start. @code_notify_running
+# cannot serve that purpose — its 1-second epoch cannot tell two turns inside
+# the same second apart, and the hooks that light and retire the marker fire
+# well inside one second of each other. Every path that lights the marker mints
+# a fresh generation under the same transition lock, so a process that observed
+# a run and acts on it later can prove the run in front of it is still the run
+# it saw (see tmux_synthetic_guard_ok). Cleared wherever the marker is, so a
+# window between turns carries neither.
+tmux_running_gen_set() {
+    local window_id="$1"
+    tmux set-option -w -t "$window_id" @code_notify_run_gen \
+        "$$.$(date +%s).${RANDOM:-0}.${RANDOM:-0}" 2>/dev/null
+    return 0
+}
+
+tmux_running_gen_clear() {
+    tmux set-option -wu -t "$1" @code_notify_run_gen 2>/dev/null
+    return 0
+}
+
 # Mark the caller's window as running. Standalone form for the running-start
 # dispatch; the notifier's prompt intercept uses tmux_prompt_submit below,
 # which folds the engage-clear and this marker into one target capture.
@@ -1807,6 +1904,7 @@ tmux_running_start() {
         tmux_running_transition_lock_release "$transition_lock" "$transition_token"
         return 0
     fi
+    tmux_running_gen_set "$window_id"
     # A new prompt or a resumed tool turn supersedes any earlier input wait —
     # and any pending post-completion idle nudge.
     tmux set-option -wu -t "$window_id" @code_notify_resume_pending 2>/dev/null
@@ -2134,6 +2232,7 @@ tmux_prompt_submit() {
         tmux_running_transition_lock_release "$transition_lock" "$transition_token"
         return 0
     fi
+    tmux_running_gen_set "$window_id"
     tmux set-option -wu -t "$window_id" @code_notify_resume_pending 2>/dev/null
     tmux_resume_flag_clear "$window_id"
     tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
@@ -2172,15 +2271,34 @@ tmux_running_stop() {
     # Out-param for notifier.sh: a preserved successor must keep its running
     # rendering instead of receiving this Stop's terminal badge.
     TMUX_RUNNING_STOP_PRESERVED=0
+    # Out-param for notifier.sh: this run is a synthetic child whose scheduled
+    # world no longer exists, so it changed nothing and must deliver nothing.
+    TMUX_RUNNING_GUARD_REJECTED=0
     tmux_focus_available || return 0
     local target session_id window_id pane_id
     target=$(tmux_focus_capture_target) || return 0
     read -r session_id window_id pane_id <<< "$target"
     local window_re='^@[0-9]+$'
     [[ "$window_id" =~ $window_re ]] || return 0
-    tmux_running_transition_lock_acquire "$window_id" || return 0
+    if ! tmux_running_transition_lock_acquire "$window_id"; then
+        # A guarded child that cannot take the lock cannot prove its run is
+        # still the current one. An unverifiable synthetic alert is dropped;
+        # an ordinary hook keeps the existing behaviour of skipping the
+        # transition and leaving the marker to the TTL sweep.
+        if [[ -n "${CODE_NOTIFY_TMUX_GUARD_WINDOW:-}" ]]; then
+            TMUX_RUNNING_GUARD_REJECTED=1
+        fi
+        return 0
+    fi
     local transition_lock="$TMUX_RUNNING_TRANSITION_LOCKDIR"
     local transition_token="$TMUX_RUNNING_TRANSITION_LOCKTOKEN"
+    # Check-and-act: from here to the mutations below nothing else can touch
+    # this window, so a guard that holds now still holds when they land.
+    if ! tmux_running_guard_admits_locked "$window_id"; then
+        TMUX_RUNNING_GUARD_REJECTED=1
+        tmux_running_transition_lock_release "$transition_lock" "$transition_token"
+        return 0
+    fi
     if [[ "$honor_queued" == "consume-queued-prompt" ]]; then
         local queued now_queued
         queued=$(tmux show-options -wqv -t "$window_id" @code_notify_queued_prompt 2>/dev/null)
@@ -2231,6 +2349,7 @@ tmux_running_stop() {
     since=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
     if [[ -n "$since" ]]; then
         tmux set-option -wu -t "$window_id" @code_notify_running 2>/dev/null
+        tmux_running_gen_clear "$window_id"
         mode=$(tmux show-options -wqv -t "$window_id" @code_notify_clear_mode 2>/dev/null)
         if [[ "$mode" == "running" ]]; then
             tmux_badge_clear_locked "$window_id"
@@ -2307,13 +2426,37 @@ tmux_running_pause_for_input() {
     local watch="${1:-}"
     tmux_focus_available || return 0
     tmux_running_stop
+    # The stop above rejected this synthetic child under the lock: the run it
+    # was scheduled against is gone, so there is no pause to park either.
+    if [[ "${TMUX_RUNNING_GUARD_REJECTED:-0}" == "1" ]]; then
+        return 0
+    fi
 
     local target session_id window_id pane_id
     target=$(tmux_focus_capture_target) || return 0
     read -r session_id window_id pane_id <<< "$target"
     local window_re='^@[0-9]+$'
     [[ "$window_id" =~ $window_re ]] || return 0
-    tmux set-option -w -t "$window_id" @code_notify_resume_pending "$(date +%s)" 2>/dev/null
+
+    # Re-acquire: the stop above releases the lock before returning, so a
+    # queued prompt (or a poll resume) can claim the window in the gap. Writing
+    # the pause state unlocked would resurrect a wait that successor turn just
+    # cleared, leaving a live run carrying a pending pause and a resume poll
+    # watching a pane nothing is waiting on. A window that is running again is
+    # no longer this event's to pause: leave it whole and let the notifier's
+    # badge guard skip painting over it. This also covers the stop that never
+    # happened at all — it returns 0 when the lock times out.
+    tmux_running_transition_lock_acquire "$window_id" || return 0
+    local transition_lock="$TMUX_RUNNING_TRANSITION_LOCKDIR"
+    local transition_token="$TMUX_RUNNING_TRANSITION_LOCKTOKEN"
+    local since now
+    since=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
+    now=$(date +%s)
+    if [[ "$since" =~ ^[0-9]+$ ]] && (( now - since < TMUX_RUNNING_TTL )); then
+        tmux_running_transition_lock_release "$transition_lock" "$transition_token"
+        return 0
+    fi
+    tmux set-option -w -t "$window_id" @code_notify_resume_pending "$now" 2>/dev/null
     tmux_resume_flag_set "$window_id"
     # The answer itself emits no hook (see TMUX_RESUME_POLL_SECONDS), so watch
     # the pane while the dialog is outstanding. The deferred snapshot is the
@@ -2324,7 +2467,7 @@ tmux_running_pause_for_input() {
     # single content change can just be the dialog rendering late (this hook
     # fires before the dialog UI). The snapshot option doubles as the watch
     # flag: pauses without it (idle reminders) are never resumed by the poll.
-    local pane_re='^%[0-9]+$'
+    local pane_re='^%[0-9]+$' schedule_poll=0
     if [[ "$watch" == "watch" ]] && [[ "$pane_id" =~ $pane_re ]] && tmux_running_enabled; then
         # Do not snapshot synchronously inside the notification hook. While
         # this command is running, Claude/Codex renders the hook's transient
@@ -2334,11 +2477,17 @@ tmux_running_pause_for_input() {
         # now; the first poll records a baseline after the hook UI has settled.
         tmux set-option -w -t "$window_id" @code_notify_pause_fp \
             "$pane_id" 2>/dev/null
-        tmux_resume_poll_schedule
+        schedule_poll=1
     else
         # No watch: drop any earlier snapshot instead of letting an alive poll
         # chain (serving another window) resume this window on a later change.
         tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
+    fi
+    tmux_running_transition_lock_release "$transition_lock" "$transition_token"
+    # Outside the window lock: the poll is one server-global timer chain, and
+    # arming it costs a run-shell round trip no transition should wait behind.
+    if (( schedule_poll )); then
+        tmux_resume_poll_schedule
     fi
     return 0
 }
@@ -2383,6 +2532,7 @@ tmux_running_resume_window() {
         tmux_running_transition_lock_release "$transition_lock" "$transition_token"
         return 0
     fi
+    tmux_running_gen_set "$window_id"
     tmux set-option -wu -t "$window_id" @code_notify_resume_pending 2>/dev/null
     tmux_resume_flag_clear "$window_id"
     tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
@@ -2740,6 +2890,7 @@ tmux_running_sweep_stale() {
             continue
         fi
         tmux set-option -wu -t "$window_id" @code_notify_running 2>/dev/null
+        tmux_running_gen_clear "$window_id"
         tmux_running_settle_disarm "$window_id"
         tmux_idle_watch_disarm "$window_id"
         mode=$(tmux show-options -wqv -t "$window_id" @code_notify_clear_mode 2>/dev/null)
