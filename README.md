@@ -206,7 +206,9 @@ See [docs/installation.md](docs/installation.md) for more details.
 | `cn badge-visible on` | Badge the focused tmux window on every event |
 | `cn badge-visible off` | Skip the focused window for waiting events (default) |
 | `cn sound on`        | Enable sound notifications                   |
-| `cn sound set <path>`| Use custom sound file                        |
+| `cn sound set <path>`| One sound for every event (turns per-event sounds off) |
+| `cn sound pool <dir>`| Random per-event sounds from `<dir>/<event>/` |
+| `cn sound pool on\|off` | Turn per-event sounds on or off           |
 | `cn voice on`        | Enable voice (macOS, Windows)                |
 | `cn voice on claude` | Enable voice for Claude only                 |
 | `cn voice engine elevenlabs` | Use ElevenLabs cloud voice (macOS)   |
@@ -217,6 +219,52 @@ See [docs/installation.md](docs/installation.md) for more details.
 When enabling project notifications with `cnp on`, Code-Notify warns if Claude project trust does not appear to be accepted yet.
 Project-scoped Claude hooks override the global mute file, so `cn off` will not suppress a project where `cnp on` is enabled.
 `all` is also accepted as an explicit alias for global commands such as `cn on all`, `cn off all`, and `cn status all`.
+
+### Per-Event Sounds
+
+Point Code-Notify at a directory of sound folders and every alert plays a
+**random** file from the folder matching its event, so the same event never
+sounds stale:
+
+```bash
+cn sound pool ~/sounds     # each event reads ~/sounds/<event>/
+cn sound pool              # show folders and how many sounds each holds
+cn sound test error        # play a random sound from the error pool
+cn sound pool off          # one sound for everything again
+cn sound pool on           # back to per-event sounds (same folder as before)
+cn sound pool default      # forget the folder, back to ~/.claude/notifications/sounds
+```
+
+| Folder         | Event                                | Falls back to  |
+| -------------- | ------------------------------------ | -------------- |
+| `complete/`    | Task finished                        | `idle/`        |
+| `idle/`        | Idle reminder                        | —              |
+| `question/`    | Input required / AskUserQuestion     | `permission/`  |
+| `permission/`  | Approval prompt                      | `question/`    |
+| `error/`       | Errors and failures                  | —              |
+| `limit/`       | Usage limit reached                  | `error/`       |
+| `usage/`       | Usage alerts                         | `error/`       |
+| `reset/`       | Tokens reset                         | `complete/`, `idle/` |
+| `test/`        | `cn test`                            | `complete/`, `idle/` |
+| `notification/`| Anything else                        | `idle/`        |
+| `subagent-start/` | Subagent launched                 | `notification/`, `idle/` |
+| `subagent-stop/`  | Subagent finished                 | `complete/`, `idle/` |
+| `teammate-idle/`  | Teammate waiting for input        | `idle/`        |
+| `task-created/`   | Agent-team task opened            | `notification/`, `idle/` |
+| `task-completed/` | Agent-team task done              | `complete/`, `idle/` |
+
+The subagent and agent-team folders also answer to their hook-type spelling, so
+`SubagentStop/` works as well as `subagent-stop/`.
+
+Folders are optional: an event with no folder (or an empty one) falls back as
+shown above, and finally to the single sound from `cn sound set`. Supported
+formats are `.wav`, `.aiff`, `.aif`, `.mp3`, `.ogg`, `.oga`, `.m4a`, and
+`.flac` (Windows plays `.wav` only). Only files sitting directly in an event
+folder count — sounds tucked into a sub-folder are ignored.
+
+`cn sound set <path>` turns per-event sounds **off**, so that one file plays for
+everything; the pool folder is remembered, so `cn sound pool on` (or naming a
+folder again) brings the per-event sounds straight back.
 
 ### tmux Running Spinner
 

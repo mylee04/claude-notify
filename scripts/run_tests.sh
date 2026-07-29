@@ -417,6 +417,14 @@ else
     test_fail "StopFailure limit-reached hook failed"
 fi
 
+# Test 27: Per-event sound pools pick randomly and fall back correctly
+test_start "per-event sound pools"
+if run_test_script tests/test-sound-pool.sh; then
+    test_pass
+else
+    test_fail "per-event sound pools failed"
+fi
+
 # Summary
 echo ""
 echo "Test Summary:"

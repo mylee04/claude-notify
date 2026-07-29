@@ -2561,11 +2561,21 @@ should_play_sound() {
 }
 
 get_notification_sound_file() {
+    # An explicit reset-alert override wins over everything.
+    if [[ "$HOOK_TYPE" == "usage_reset" ]] && [[ -n "${CODE_NOTIFY_USAGE_RESET_SOUND_FILE:-}" ]]; then
+        printf '%s\n' "$CODE_NOTIFY_USAGE_RESET_SOUND_FILE"
+        return
+    fi
+
+    # Per-event pool next: a random file from the folder matching this event
+    # (see sound_event_candidates), so repeated alerts of the same kind vary.
+    local pool_sound
+    if pool_sound=$(pick_event_sound "$HOOK_TYPE" "${NOTIFICATION_SUBTYPE:-}" 2>/dev/null); then
+        printf '%s\n' "$pool_sound"
+        return
+    fi
+
     if [[ "$HOOK_TYPE" == "usage_reset" ]]; then
-        if [[ -n "${CODE_NOTIFY_USAGE_RESET_SOUND_FILE:-}" ]]; then
-            printf '%s\n' "$CODE_NOTIFY_USAGE_RESET_SOUND_FILE"
-            return
-        fi
         case "$(detect_os 2>/dev/null || uname -s | tr '[:upper:]' '[:lower:]')" in
             "macos"|"Darwin"|"darwin")
                 printf '%s\n' "/System/Library/Sounds/Hero.aiff"

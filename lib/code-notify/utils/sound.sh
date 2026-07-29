@@ -7,6 +7,22 @@ SOUND_DIR="$HOME/.claude/notifications"
 SOUND_ENABLED_FILE="$SOUND_DIR/sound-enabled"
 SOUND_CUSTOM_FILE="$SOUND_DIR/sound-custom"
 SOUND_CUSTOM_DIR="$SOUND_DIR/sounds"
+# Root of the per-event sound pools: one sub-folder per event name
+# (error/idle/permission/question/...), each holding any number of audio files
+# that are picked from at random. Defaults to $SOUND_CUSTOM_DIR; `cn sound
+# pool <dir>` points it at an existing collection instead.
+SOUND_POOL_FILE="$SOUND_DIR/sound-pool"
+# Presence of this marker mutes the pools without forgetting their root, so
+# `cn sound set <file>` can hand every event to that one file and `cn sound
+# pool on` can hand them back.
+SOUND_POOL_OFF_FILE="$SOUND_DIR/sound-pool-off"
+
+# Pool folder names, in the order the event mapping prefers them. Kept as a
+# list so `cn sound pool` can report every folder it looks at.
+SOUND_POOL_EVENTS=(
+    complete idle question permission error limit usage reset test notification
+    subagent-start subagent-stop teammate-idle task-created task-completed
+)
 
 # Default system sounds per platform
 get_default_sound() {
@@ -61,6 +77,26 @@ get_sound() {
     fi
 }
 
+# Whether a path is a playable audio file (existence + supported extension).
+# Also filters the un-expanded glob pattern out of the pool scan below, which
+# is why it checks -f rather than trusting the caller.
+is_supported_audio_file() {
+    local path="$1"
+
+    [[ -f "$path" ]] || return 1
+
+    local ext="${path##*.}"
+    ext=$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')
+    case "$ext" in
+        "wav"|"aiff"|"aif"|"mp3"|"ogg"|"oga"|"m4a"|"flac")
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Set custom sound file
 set_custom_sound() {
     local sound_path="$1"
@@ -75,20 +111,213 @@ set_custom_sound() {
     fi
 
     # Validate file extension
-    local ext="${sound_path##*.}"
-    ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
-    case "$ext" in
-        "wav"|"aiff"|"aif"|"mp3"|"ogg"|"oga"|"m4a"|"flac")
-            ;;
-        *)
-            echo "Error: Unsupported audio format: .$ext" >&2
-            echo "Supported formats: .wav, .aiff, .mp3, .ogg, .m4a, .flac" >&2
-            return 1
-            ;;
-    esac
+    if ! is_supported_audio_file "$sound_path"; then
+        echo "Error: Unsupported audio format: .${sound_path##*.}" >&2
+        echo "Supported formats: .wav, .aiff, .aif, .mp3, .ogg, .oga, .m4a, .flac" >&2
+        return 1
+    fi
 
     mkdir -p "$SOUND_DIR"
     echo "$sound_path" > "$SOUND_CUSTOM_FILE"
+    # Picking one file means wanting to hear it: mute the per-event pools so
+    # this sound plays for every event. `cn sound pool on` brings them back.
+    disable_sound_pool
+}
+
+# ============================================
+# Per-event sound pools
+# ============================================
+
+# Whether events draw from the pools at all
+is_sound_pool_enabled() {
+    [[ ! -f "$SOUND_POOL_OFF_FILE" ]]
+}
+
+# Mute the pools, keeping the configured root for later
+disable_sound_pool() {
+    mkdir -p "$SOUND_DIR"
+    touch "$SOUND_POOL_OFF_FILE"
+}
+
+# Draw from the pools again
+enable_sound_pool() {
+    rm -f "$SOUND_POOL_OFF_FILE"
+}
+
+# Root directory holding the per-event sub-folders
+get_sound_pool_dir() {
+    local dir=""
+
+    if [[ -f "$SOUND_POOL_FILE" ]]; then
+        IFS= read -r dir < "$SOUND_POOL_FILE" || true
+        dir="${dir/#\~/$HOME}"
+    fi
+
+    printf '%s\n' "${dir:-$SOUND_CUSTOM_DIR}"
+}
+
+# Point the pools at a directory of per-event sub-folders
+set_sound_pool_dir() {
+    local pool_dir="$1"
+
+    pool_dir="${pool_dir/#\~/$HOME}"
+
+    if [[ -z "$pool_dir" ]]; then
+        echo "Error: pool directory required" >&2
+        return 1
+    fi
+
+    if [[ ! -d "$pool_dir" ]]; then
+        echo "Error: Directory not found: $pool_dir" >&2
+        return 1
+    fi
+
+    mkdir -p "$SOUND_DIR"
+    printf '%s\n' "${pool_dir%/}" > "$SOUND_POOL_FILE"
+    # Naming a pool means wanting to hear it, even if `cn sound set` muted the
+    # pools earlier.
+    enable_sound_pool
+}
+
+# Reset the pool root back to ~/.claude/notifications/sounds
+reset_sound_pool_dir() {
+    rm -f "$SOUND_POOL_FILE"
+    enable_sound_pool
+}
+
+# List the playable files in one event pool (empty output when the folder is
+# missing or holds nothing playable)
+list_pool_sounds() {
+    local event="$1"
+    local pool_dir
+    pool_dir="$(get_sound_pool_dir)/$event"
+
+    [[ -d "$pool_dir" ]] || return 0
+
+    local sound
+    for sound in "$pool_dir"/*; do
+        if is_supported_audio_file "$sound"; then
+            printf '%s\n' "$sound"
+        fi
+    done
+}
+
+# Pick one random file from an event pool; returns 1 when the pool is empty
+pick_pool_sound() {
+    local event="$1"
+    local sounds=()
+    local sound
+
+    while IFS= read -r sound; do
+        [[ -n "$sound" ]] && sounds+=("$sound")
+    done < <(list_pool_sounds "$event")
+
+    local count="${#sounds[@]}"
+    [[ "$count" -eq 0 ]] && return 1
+
+    printf '%s\n' "${sounds[$((RANDOM % count))]}"
+}
+
+# Map a notification event to the pool folders to try, best match first. Every
+# event falls through to a folder the user is likely to have created, so a
+# collection with only error/idle/permission/question still covers everything.
+# Agent-team and subagent events accept the hook-type spelling as an alias
+# (SubagentStop/ as well as subagent-stop/), since that is the name Claude Code
+# uses for the hook and the one users reach for first.
+sound_event_candidates() {
+    local hook_type="${1:-}"
+    local subtype="${2:-}"
+
+    case "$hook_type" in
+        "stop")
+            printf '%s\n' "complete idle"
+            ;;
+        "notification")
+            case "$subtype" in
+                "idle_prompt")
+                    printf '%s\n' "idle"
+                    ;;
+                "permission_prompt")
+                    printf '%s\n' "permission question"
+                    ;;
+                *)
+                    # Generic "input required" and elicitation dialogs both ask
+                    # the user something.
+                    printf '%s\n' "question permission"
+                    ;;
+            esac
+            ;;
+        "PreToolUse")
+            # AskUserQuestion
+            printf '%s\n' "question permission"
+            ;;
+        "SubagentStart")
+            printf '%s\n' "subagent-start SubagentStart notification idle"
+            ;;
+        "SubagentStop")
+            printf '%s\n' "subagent-stop SubagentStop complete idle"
+            ;;
+        "TeammateIdle")
+            printf '%s\n' "teammate-idle TeammateIdle idle"
+            ;;
+        "TaskCreated")
+            printf '%s\n' "task-created TaskCreated notification idle"
+            ;;
+        "TaskCompleted")
+            printf '%s\n' "task-completed TaskCompleted complete idle"
+            ;;
+        "error"|"failed")
+            printf '%s\n' "error"
+            ;;
+        "StopFailure")
+            printf '%s\n' "limit error"
+            ;;
+        "usage")
+            printf '%s\n' "usage error"
+            ;;
+        "usage_reset")
+            printf '%s\n' "reset complete idle"
+            ;;
+        "test")
+            printf '%s\n' "test complete idle"
+            ;;
+        *)
+            printf '%s\n' "notification idle"
+            ;;
+    esac
+}
+
+# Random sound for an event, or empty when no pool folder matches (callers then
+# fall back to the single configured sound)
+pick_event_sound() {
+    local hook_type="${1:-}"
+    local subtype="${2:-}"
+    local candidates=()
+    local event
+    local pick
+
+    is_sound_pool_enabled || return 1
+
+    read -r -a candidates <<< "$(sound_event_candidates "$hook_type" "$subtype")"
+
+    for event in "${candidates[@]}"; do
+        if pick=$(pick_pool_sound "$event"); then
+            printf '%s\n' "$pick"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Sound for an event with the single-sound fallback applied
+get_event_sound() {
+    local pick
+    if pick=$(pick_event_sound "$@"); then
+        printf '%s\n' "$pick"
+        return 0
+    fi
+    get_sound
 }
 
 # Reset to default sound

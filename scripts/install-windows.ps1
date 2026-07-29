@@ -121,7 +121,16 @@ $script:NotifyTypesFile = "$script:NotificationsDir\notify-types"
 $script:VoiceFile = "$script:NotificationsDir\voice-enabled"
 $script:SoundEnabledFile = "$script:NotificationsDir\sound-enabled"
 $script:SoundCustomFile = "$script:NotificationsDir\sound-custom"
+$script:SoundPoolFile = "$script:NotificationsDir\sound-pool"
+# Presence of this marker mutes the pools without forgetting their root.
+$script:SoundPoolOffFile = "$script:NotificationsDir\sound-pool-off"
+$script:DefaultSoundPoolDir = "$script:NotificationsDir\sounds"
 $script:DefaultSoundFile = "C:\Windows\Media\chimes.wav"
+# System.Media.SoundPlayer only decodes WAV; the other formats are accepted so
+# a pool shared with macOS/Linux still validates, they just may not play here.
+$script:SoundExtensions = @('.wav', '.aiff', '.aif', '.mp3', '.ogg', '.oga', '.m4a', '.flac', '.wma')
+$script:SoundPoolEvents = @('complete', 'idle', 'question', 'permission', 'error', 'limit', 'usage', 'reset', 'test', 'notification',
+    'subagent-start', 'subagent-stop', 'teammate-idle', 'task-created', 'task-completed')
 $script:CodexHome = "$env:USERPROFILE\.codex"
 $script:CodexConfigFile = "$script:CodexHome\config.toml"
 $script:CodexHooksFile = "$script:CodexHome\hooks.json"
@@ -612,6 +621,129 @@ function Get-SoundFile {
     return $script:DefaultSoundFile
 }
 
+# Per-event sound pools: one sub-folder per event under the pool root, each
+# holding any number of audio files that are picked from at random. Mirrors
+# lib/code-notify/utils/sound.sh so both platforms read the same config.
+function Test-SoundPoolEnabled {
+    return (-not (Test-Path $script:SoundPoolOffFile))
+}
+
+function Disable-SoundPool {
+    if (-not (Test-Path $script:NotificationsDir)) {
+        New-Item -ItemType Directory -Path $script:NotificationsDir -Force | Out-Null
+    }
+    New-Item -ItemType File -Path $script:SoundPoolOffFile -Force | Out-Null
+}
+
+function Enable-SoundPool {
+    if (Test-Path $script:SoundPoolOffFile) {
+        Remove-Item $script:SoundPoolOffFile -Force
+    }
+}
+
+function Get-SoundPoolDir {
+    if (Test-Path $script:SoundPoolFile) {
+        $dir = (Get-Content $script:SoundPoolFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($dir) { return $dir.Trim() }
+    }
+    return $script:DefaultSoundPoolDir
+}
+
+function Set-SoundPoolDir {
+    param([string]$PoolDir)
+
+    if (-not $PoolDir) {
+        Write-Host "[X] Please provide a pool directory" -ForegroundColor Red
+        Write-Host "Usage: cn sound pool <dir>" -ForegroundColor Gray
+        return $false
+    }
+
+    $PoolDir = [Environment]::ExpandEnvironmentVariables($PoolDir)
+    if (-not (Test-Path $PoolDir -PathType Container)) {
+        Write-Host "[X] Directory not found: $PoolDir" -ForegroundColor Red
+        return $false
+    }
+
+    if (-not (Test-Path $script:NotificationsDir)) {
+        New-Item -ItemType Directory -Path $script:NotificationsDir -Force | Out-Null
+    }
+    $PoolDir.TrimEnd('\') | Set-Content $script:SoundPoolFile -Encoding UTF8
+    # Naming a pool means wanting to hear it, even if Set-CustomSound muted the
+    # pools earlier.
+    Enable-SoundPool
+    return $true
+}
+
+function Reset-SoundPoolDir {
+    if (Test-Path $script:SoundPoolFile) {
+        Remove-Item $script:SoundPoolFile -Force
+    }
+    Enable-SoundPool
+}
+
+function Get-PoolSounds {
+    param([string]$Event)
+
+    $dir = Join-Path (Get-SoundPoolDir) $Event
+    if (-not (Test-Path $dir -PathType Container)) { return @() }
+
+    return @(Get-ChildItem -Path $dir -File -ErrorAction SilentlyContinue |
+        Where-Object { $script:SoundExtensions -contains $_.Extension.ToLower() } |
+        ForEach-Object { $_.FullName })
+}
+
+function Get-RandomPoolSound {
+    param([string]$Event)
+
+    $sounds = Get-PoolSounds -Event $Event
+    if ($sounds.Count -eq 0) { return $null }
+    return (Get-Random -InputObject $sounds)
+}
+
+# Pool folders to try for an event, best match first. Every event falls through
+# to a folder the user is likely to have, so a collection with only
+# error/idle/permission/question still covers everything.
+function Get-SoundEventCandidates {
+    param([string]$HookTypeName, [string]$Subtype)
+
+    switch ($HookTypeName) {
+        "stop" { return @("complete", "idle") }
+        "notification" {
+            switch ($Subtype) {
+                "idle_prompt" { return @("idle") }
+                "permission_prompt" { return @("permission", "question") }
+                default { return @("question", "permission") }
+            }
+        }
+        "PreToolUse" { return @("question", "permission") }
+        "SubagentStart" { return @("subagent-start", "SubagentStart", "notification", "idle") }
+        "SubagentStop" { return @("subagent-stop", "SubagentStop", "complete", "idle") }
+        "TeammateIdle" { return @("teammate-idle", "TeammateIdle", "idle") }
+        "TaskCreated" { return @("task-created", "TaskCreated", "notification", "idle") }
+        "TaskCompleted" { return @("task-completed", "TaskCompleted", "complete", "idle") }
+        "error" { return @("error") }
+        "failed" { return @("error") }
+        "StopFailure" { return @("limit", "error") }
+        "usage" { return @("usage", "error") }
+        "usage_reset" { return @("reset", "complete", "idle") }
+        "test" { return @("test", "complete", "idle") }
+        default { return @("notification", "idle") }
+    }
+}
+
+# Random sound for an event, or $null when no pool folder matches
+function Get-EventPoolSound {
+    param([string]$HookTypeName, [string]$Subtype)
+
+    if (-not (Test-SoundPoolEnabled)) { return $null }
+
+    foreach ($candidate in (Get-SoundEventCandidates -HookTypeName $HookTypeName -Subtype $Subtype)) {
+        $pick = Get-RandomPoolSound -Event $candidate
+        if ($pick) { return $pick }
+    }
+    return $null
+}
+
 function Send-SoundNotification {
     if (-not (Test-SoundEnabled)) { return }
 
@@ -685,8 +817,13 @@ function Set-CustomSound {
 
     $SoundPath | Set-Content $script:SoundCustomFile -Encoding UTF8
     New-Item -ItemType File -Path $script:SoundEnabledFile -Force | Out-Null
+    # Picking one file means wanting to hear it: mute the per-event pools so
+    # this sound plays for every event. `cn sound pool on` brings them back.
+    Disable-SoundPool
 
     Write-Success "Custom sound set: $SoundPath"
+    Write-Info "This sound now plays for every event; per-event sounds are off"
+    Write-Info "Bring them back with: cn sound pool on"
     Send-SoundNotification
 }
 
@@ -699,17 +836,113 @@ function Reset-Sound {
 }
 
 function Test-Sound {
+    param([string]$Event)
+
     Write-Host "`n[*] Testing Sound" -ForegroundColor Cyan
     Write-Host "================`n" -ForegroundColor Cyan
 
-    if (Test-SoundEnabled) {
-        $soundFile = Get-SoundFile
-        Write-Host "Playing: $soundFile" -ForegroundColor Gray
-        Send-SoundNotification
-        Write-Success "Sound played!"
-    } else {
+    if (-not (Test-SoundEnabled)) {
         Write-Warning "Sound is disabled"
         Write-Info "Enable with: cn sound on"
+        return
+    }
+
+    if ($Event) {
+        $pick = Get-RandomPoolSound -Event $Event
+        if (-not $pick) {
+            Write-Host "[X] No sounds in pool: $(Join-Path (Get-SoundPoolDir) $Event)" -ForegroundColor Red
+            Write-Info "Add audio files there, or see: cn sound pool"
+            return
+        }
+        Write-Host "Playing: $pick" -ForegroundColor Gray
+        try {
+            $player = New-Object System.Media.SoundPlayer
+            $player.SoundLocation = $pick
+            $player.PlaySync()
+        } catch {
+            # Silently fail if sound cannot be played
+        }
+        Write-Success "Sound played!"
+        return
+    }
+
+    $soundFile = Get-SoundFile
+    Write-Host "Playing: $soundFile" -ForegroundColor Gray
+    Send-SoundNotification
+    Write-Success "Sound played!"
+}
+
+function Invoke-SoundPoolCommand {
+    param([string]$Action)
+
+    switch ($Action) {
+        { $_ -in @("", $null, "status", "list") } { Show-SoundPoolStatus }
+        "on" {
+            Write-Host "`n[*] Enabling Sound Pool" -ForegroundColor Cyan
+            Write-Host "=======================`n" -ForegroundColor Cyan
+            Enable-SoundPool
+            Write-Success "Per-event sounds enabled"
+            Show-SoundPoolStatus
+        }
+        "off" {
+            Write-Host "`n[*] Disabling Sound Pool" -ForegroundColor Cyan
+            Write-Host "========================`n" -ForegroundColor Cyan
+            Disable-SoundPool
+            Write-Success "Per-event sounds disabled"
+            Write-Info "Every event now plays: $(Get-SoundFile)"
+            Write-Info "Re-enable with: cn sound pool on"
+        }
+        { $_ -in @("default", "reset") } {
+            Write-Host "`n[*] Resetting Sound Pool" -ForegroundColor Cyan
+            Write-Host "========================`n" -ForegroundColor Cyan
+            Reset-SoundPoolDir
+            Write-Success "Sound pool reset"
+            Write-Info "Using: $(Get-SoundPoolDir)"
+        }
+        default {
+            Write-Host "`n[*] Setting Sound Pool" -ForegroundColor Cyan
+            Write-Host "======================`n" -ForegroundColor Cyan
+            if (Set-SoundPoolDir -PoolDir $Action) {
+                Write-Success "Sound pool set: $(Get-SoundPoolDir)"
+                Show-SoundPoolStatus
+            }
+        }
+    }
+}
+
+function Show-SoundPoolStatus {
+    Write-Host "`n[*] Sound Pool" -ForegroundColor Cyan
+    Write-Host "==============`n" -ForegroundColor Cyan
+    if (Test-SoundPoolEnabled) {
+        Write-Host "  [*] Per-event sounds: ENABLED" -ForegroundColor Green
+    } else {
+        Write-Host "  [-] Per-event sounds: DISABLED (every event plays $(Get-SoundFile))" -ForegroundColor DarkGray
+        Write-Host "      Re-enable with: cn sound pool on" -ForegroundColor Gray
+    }
+    Write-Host "  Directory: $(Get-SoundPoolDir)"
+    Write-Host ""
+
+    $total = 0
+    foreach ($poolEvent in $script:SoundPoolEvents) {
+        $count = (Get-PoolSounds -Event $poolEvent).Count
+        if ($count -gt 0) {
+            Write-Host "  [OK] $poolEvent - $count sound(s)" -ForegroundColor Green
+            $total += $count
+        } else {
+            Write-Host "  .  $poolEvent - empty" -ForegroundColor DarkGray
+        }
+    }
+
+    Write-Host ""
+    if ($total -eq 0) {
+        Write-Warning "No event sounds found - every alert uses: $(Get-SoundFile)"
+        Write-Info "Create sub-folders named after the events above and drop audio files in them,"
+        Write-Info "or point the pool at an existing collection: cn sound pool <dir>"
+    } elseif (Test-SoundPoolEnabled) {
+        Write-Info "Each alert plays a random file from its event folder."
+        Write-Info "Events with an empty folder fall back to: $(Get-SoundFile)"
+    } else {
+        Write-Info "These folders are ignored while per-event sounds are disabled."
     }
 }
 
@@ -745,13 +978,27 @@ function Show-SoundStatus {
         Write-Host "[-] Sound: DISABLED" -ForegroundColor DarkGray
     }
 
+    $poolTotal = 0
+    foreach ($poolEvent in $script:SoundPoolEvents) {
+        $poolTotal += (Get-PoolSounds -Event $poolEvent).Count
+    }
+    if ($poolTotal -gt 0) {
+        if (Test-SoundPoolEnabled) {
+            Write-Host "    Pool: $poolTotal sound(s) in $(Get-SoundPoolDir) (random per event)" -ForegroundColor Gray
+        } else {
+            Write-Host "    Pool: disabled - $poolTotal sound(s) in $(Get-SoundPoolDir)" -ForegroundColor DarkGray
+        }
+    }
+
     Write-Host ""
     Write-Host "Commands:" -ForegroundColor White
     Write-Host "  cn sound on              Enable with default system sound" -ForegroundColor Gray
     Write-Host "  cn sound off             Disable sound notifications" -ForegroundColor Gray
     Write-Host "  cn sound set <path>      Use custom sound file" -ForegroundColor Gray
     Write-Host "  cn sound default         Reset to system default" -ForegroundColor Gray
-    Write-Host "  cn sound test            Play current sound" -ForegroundColor Gray
+    Write-Host "  cn sound pool <dir>      Random per-event sounds from <dir>\<event>\" -ForegroundColor Gray
+    Write-Host "  cn sound pool on|off     Turn per-event sounds on or off" -ForegroundColor Gray
+    Write-Host "  cn sound test [event]    Play current sound (or an event's pool)" -ForegroundColor Gray
     Write-Host "  cn sound list            Show available system sounds" -ForegroundColor Gray
 }
 
@@ -2210,9 +2457,12 @@ TOOLS:
 SOUND COMMANDS:
     sound on        Enable with default system sound
     sound off       Disable sound notifications
-    sound set <path> Use custom sound file (.wav, .mp3, .wma)
+    sound set <path> One sound for every event (turns per-event sounds off)
     sound default   Reset to system default
-    sound test      Play current sound
+    sound pool <dir> Random per-event sounds from <dir>\<event>\
+    sound pool on|off Turn per-event sounds on or off
+    sound pool      Show pool folders and sound counts
+    sound test [event] Play current sound (or an event's pool)
     sound list      Show available system sounds
     sound status    Show sound configuration
 
@@ -2433,7 +2683,8 @@ function Invoke-CodeNotify {
                 "off" { Disable-Sound }
                 "set" { Set-CustomSound -SoundPath ($Args | Select-Object -First 1) }
                 "default" { Reset-Sound }
-                "test" { Test-Sound }
+                "pool" { Invoke-SoundPoolCommand -Action ($Args | Select-Object -First 1) }
+                "test" { Test-Sound -Event ($Args | Select-Object -First 1) }
                 "list" { Get-SystemSounds }
                 "status" { Show-SoundStatus }
                 default { Show-SoundStatus }
@@ -2501,6 +2752,12 @@ Export-ModuleMember -Function @(
     'Test-Sound',
     'Get-SystemSounds',
     'Show-SoundStatus',
+    'Set-SoundPoolDir',
+    'Reset-SoundPoolDir',
+    'Enable-SoundPool',
+    'Disable-SoundPool',
+    'Get-EventPoolSound',
+    'Show-SoundPoolStatus',
     'Send-TestNotification',
     'Update-CodeNotify',
     'Show-Help'
@@ -3738,6 +3995,61 @@ function Send-VoiceNotificationLocal {
     }
 }
 
+# Per-event sound pools (mirrors the module and lib/code-notify/utils/sound.sh):
+# one sub-folder per event under the pool root, picked from at random.
+function Get-EventPoolSoundLocal {
+    param([string]$HookTypeName, [string]$Subtype)
+
+    # `cn sound set <file>` drops this marker so the single sound wins.
+    if (Test-Path "$ClaudeHome\notifications\sound-pool-off") { return $null }
+
+    $poolFile = "$ClaudeHome\notifications\sound-pool"
+    $poolDir = "$ClaudeHome\notifications\sounds"
+    if (Test-Path $poolFile) {
+        $configured = (Get-Content $poolFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($configured) { $poolDir = $configured.Trim() }
+    }
+
+    $extensions = @('.wav', '.aiff', '.aif', '.mp3', '.ogg', '.oga', '.m4a', '.flac', '.wma')
+
+    # Folders to try, best match first; every event falls through to one the
+    # user is likely to have.
+    $candidates = switch ($HookTypeName) {
+        "stop" { @("complete", "idle") }
+        "notification" {
+            switch ($Subtype) {
+                "idle_prompt" { @("idle") }
+                "permission_prompt" { @("permission", "question") }
+                default { @("question", "permission") }
+            }
+        }
+        "PreToolUse" { @("question", "permission") }
+        "SubagentStart" { @("subagent-start", "SubagentStart", "notification", "idle") }
+        "SubagentStop" { @("subagent-stop", "SubagentStop", "complete", "idle") }
+        "TeammateIdle" { @("teammate-idle", "TeammateIdle", "idle") }
+        "TaskCreated" { @("task-created", "TaskCreated", "notification", "idle") }
+        "TaskCompleted" { @("task-completed", "TaskCompleted", "complete", "idle") }
+        "error" { @("error") }
+        "failed" { @("error") }
+        "StopFailure" { @("limit", "error") }
+        "usage" { @("usage", "error") }
+        "usage_reset" { @("reset", "complete", "idle") }
+        "test" { @("test", "complete", "idle") }
+        default { @("notification", "idle") }
+    }
+
+    foreach ($candidate in $candidates) {
+        $dir = Join-Path $poolDir $candidate
+        if (-not (Test-Path $dir -PathType Container)) { continue }
+        $sounds = @(Get-ChildItem -Path $dir -File -ErrorAction SilentlyContinue |
+            Where-Object { $extensions -contains $_.Extension.ToLower() } |
+            ForEach-Object { $_.FullName })
+        if ($sounds.Count -gt 0) { return (Get-Random -InputObject $sounds) }
+    }
+
+    return $null
+}
+
 # Send sound notification if enabled
 function Send-SoundNotificationLocal {
     $SoundEnabledFile = "$ClaudeHome\notifications\sound-enabled"
@@ -3745,11 +4057,16 @@ function Send-SoundNotificationLocal {
     $DefaultSoundFile = "C:\Windows\Media\chimes.wav"
     $UsageResetSoundFile = "C:\Windows\Media\tada.wav"
 
+    # An explicit reset-alert sound_file wins over everything, matching the
+    # bash notifier's CODE_NOTIFY_USAGE_RESET_SOUND_FILE.
+    $soundFileIsExplicit = $false
+
     if ($HookType -eq "usage_reset") {
         $resetConfig = Get-UsageResetAlertConfigLocal
         if (-not $resetConfig.enabled -or -not $resetConfig.sound) { return }
         if ($resetConfig.sound_file) {
             $soundFile = $resetConfig.sound_file
+            $soundFileIsExplicit = $true
         } else {
             $soundFile = $UsageResetSoundFile
         }
@@ -3760,6 +4077,14 @@ function Send-SoundNotificationLocal {
         if (Test-Path $SoundCustomFile) {
             $soundFile = Get-Content $SoundCustomFile -ErrorAction SilentlyContinue
         }
+    }
+
+    # A per-event pool otherwise wins over the single configured sound.
+    if (-not $soundFileIsExplicit) {
+        $subtype = ""
+        if ($HookType -eq "notification") { $subtype = Get-NotificationSubtype }
+        $pooled = Get-EventPoolSoundLocal -HookTypeName $HookType -Subtype $subtype
+        if ($pooled) { $soundFile = $pooled }
     }
 
     if (-not (Test-Path $soundFile)) { return }

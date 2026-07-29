@@ -98,9 +98,12 @@ ${BOLD}WORDING COMMANDS:${RESET}
 ${BOLD}SOUND COMMANDS:${RESET}
     ${GREEN}sound on${RESET}            Enable with default system sound
     ${GREEN}sound off${RESET}           Disable sound notifications
-    ${GREEN}sound set${RESET} <path>    Use custom sound file (.wav, .aiff, .mp3, .ogg)
+    ${GREEN}sound set${RESET} <path>    One sound for every event (turns per-event sounds off)
     ${GREEN}sound default${RESET}       Reset to system default
-    ${GREEN}sound test${RESET}          Play current sound
+    ${GREEN}sound pool${RESET} <dir>    Random per-event sounds from <dir>/<event>/
+    ${GREEN}sound pool on|off${RESET}   Turn per-event sounds on or off
+    ${GREEN}sound pool${RESET}          Show pool folders and sound counts
+    ${GREEN}sound test${RESET} [event]  Play current sound (or an event's pool)
     ${GREEN}sound list${RESET}          Show available system sounds
     ${GREEN}sound status${RESET}        Show sound configuration
 

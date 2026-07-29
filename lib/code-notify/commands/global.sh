@@ -1777,6 +1777,8 @@ handle_sound_command() {
             if set_custom_sound "$sound_path"; then
                 enable_sound
                 success "Custom sound set: $sound_path"
+                info "This sound now plays for every event; per-event sounds are off"
+                info "Bring them back with: cn sound pool on"
                 echo ""
                 test_sound
             fi
@@ -1795,15 +1797,37 @@ handle_sound_command() {
             fi
             ;;
         "test")
+            local test_event="${1:-}"
             header "${BELL} Testing Sound"
             echo ""
-            if is_sound_enabled; then
-                test_sound
-                success "Sound played!"
-            else
+            if ! is_sound_enabled; then
                 warning "Sound is disabled"
                 info "Enable with: cn sound on"
+                return 0
             fi
+            if [[ -n "$test_event" ]]; then
+                local event_sound
+                if ! event_sound=$(pick_pool_sound "$test_event"); then
+                    error "No sounds in pool: $(get_sound_pool_dir)/$test_event"
+                    echo ""
+                    info "Add audio files there, or see: cn sound pool"
+                    return 1
+                fi
+                echo "Playing: $event_sound"
+                play_sound "$event_sound"
+                success "Sound played!"
+                if ! is_sound_pool_enabled; then
+                    echo ""
+                    warning "Per-event sounds are disabled — real alerts play $(get_sound)"
+                    info "Enable with: cn sound pool on"
+                fi
+            else
+                test_sound
+                success "Sound played!"
+            fi
+            ;;
+        "pool")
+            handle_sound_pool_command "$@"
             ;;
         "list")
             header "${BELL} Available System Sounds"
@@ -1814,6 +1838,113 @@ handle_sound_command() {
             show_sound_status
             ;;
     esac
+}
+
+# Handle per-event sound pools
+# Usage: cn sound pool [<dir> | default | status]
+handle_sound_pool_command() {
+    local action="${1:-status}"
+
+    case "$action" in
+        "status"|"list"|"")
+            show_sound_pool_status
+            ;;
+        "on")
+            header "${BELL} Enabling Sound Pool"
+            echo ""
+            enable_sound_pool
+            success "Per-event sounds ENABLED"
+            echo ""
+            show_sound_pool_status
+            ;;
+        "off")
+            header "${MUTE} Disabling Sound Pool"
+            echo ""
+            disable_sound_pool
+            success "Per-event sounds DISABLED"
+            info "Every event now plays: $(get_sound)"
+            info "Re-enable with: cn sound pool on"
+            ;;
+        "default"|"reset")
+            header "${BELL} Resetting Sound Pool"
+            echo ""
+            reset_sound_pool_dir
+            success "Sound pool reset"
+            info "Using: $(get_sound_pool_dir)"
+            ;;
+        *)
+            header "${BELL} Setting Sound Pool"
+            echo ""
+            if set_sound_pool_dir "$action"; then
+                success "Sound pool set: $(get_sound_pool_dir)"
+                echo ""
+                show_sound_pool_status
+            fi
+            ;;
+    esac
+}
+
+# Show the pool root and how many sounds each event folder holds
+show_sound_pool_status() {
+    local pool_dir
+    pool_dir=$(get_sound_pool_dir)
+
+    header "${BELL} Sound Pool"
+    echo ""
+    if is_sound_pool_enabled; then
+        echo "  ${CHECK_MARK} Per-event sounds: ${GREEN}ENABLED${RESET}"
+    else
+        echo "  ${MUTE} Per-event sounds: ${DIM}DISABLED${RESET} (every event plays $(get_sound))"
+        echo "     Re-enable with: ${CYAN}cn sound pool on${RESET}"
+    fi
+    echo "  Directory: $pool_dir"
+    echo ""
+
+    local event
+    local total=0
+    for event in "${SOUND_POOL_EVENTS[@]}"; do
+        local count
+        count=$(list_pool_sounds "$event" | wc -l | tr -d ' ')
+        if [[ "$count" -gt 0 ]]; then
+            echo "  ${CHECK_MARK} ${GREEN}${event}${RESET} — $count sound(s)"
+            total=$((total + count))
+        else
+            echo "  ${DIM}·  ${event} — empty${RESET}"
+        fi
+    done
+
+    echo ""
+    if [[ "$total" -eq 0 ]]; then
+        warning "No event sounds found — every alert uses: $(get_sound)"
+        echo ""
+        info "Create sub-folders named after the events above and drop audio files in them,"
+        info "or point the pool at an existing collection: ${CYAN}cn sound pool <dir>${RESET}"
+    elif is_sound_pool_enabled; then
+        info "Each alert plays a random file from its event folder."
+        info "Events with an empty folder fall back to: $(get_sound)"
+    else
+        info "These folders are ignored while per-event sounds are disabled."
+    fi
+
+    echo ""
+    info "Event mapping:"
+    echo "  ${DIM}complete${RESET}      task finished (falls back to idle)"
+    echo "  ${DIM}idle${RESET}          idle reminder"
+    echo "  ${DIM}question${RESET}      input required / AskUserQuestion"
+    echo "  ${DIM}permission${RESET}    approval prompt (falls back to question)"
+    echo "  ${DIM}error${RESET}         errors and failures"
+    echo "  ${DIM}limit${RESET}         usage limit reached (falls back to error)"
+    echo "  ${DIM}usage${RESET}         usage alerts (falls back to error)"
+    echo "  ${DIM}reset${RESET}         token reset (falls back to complete/idle)"
+    echo "  ${DIM}test${RESET}          cn test (falls back to complete/idle)"
+    echo "  ${DIM}notification${RESET}  anything else (falls back to idle)"
+    echo "  ${DIM}subagent-start${RESET}  subagent launched (falls back to notification/idle)"
+    echo "  ${DIM}subagent-stop${RESET}   subagent finished (falls back to complete/idle)"
+    echo "  ${DIM}teammate-idle${RESET}   teammate waiting (falls back to idle)"
+    echo "  ${DIM}task-created${RESET}    team task opened (falls back to notification/idle)"
+    echo "  ${DIM}task-completed${RESET}  team task done (falls back to complete/idle)"
+    echo ""
+    info "The last five also accept their hook-type spelling (SubagentStop/ etc.)."
 }
 
 # Show detailed sound status
@@ -1835,12 +1966,27 @@ show_sound_status() {
         echo "  ${MUTE} Sound: ${DIM}DISABLED${RESET}"
     fi
 
+    local pool_dir pool_total event
+    pool_dir=$(get_sound_pool_dir)
+    pool_total=0
+    for event in "${SOUND_POOL_EVENTS[@]}"; do
+        pool_total=$((pool_total + $(list_pool_sounds "$event" | wc -l | tr -d ' ')))
+    done
+    if [[ "$pool_total" -gt 0 ]]; then
+        if is_sound_pool_enabled; then
+            echo "     Pool: $pool_total sound(s) in $pool_dir (random per event)"
+        else
+            echo "     Pool: ${DIM}disabled${RESET} — $pool_total sound(s) in $pool_dir"
+        fi
+    fi
+
     echo ""
     info "Commands:"
     echo "  ${CYAN}cn sound on${RESET}              Enable with default system sound"
     echo "  ${CYAN}cn sound off${RESET}             Disable sound notifications"
     echo "  ${CYAN}cn sound set <path>${RESET}      Use custom sound file"
     echo "  ${CYAN}cn sound default${RESET}         Reset to system default"
-    echo "  ${CYAN}cn sound test${RESET}            Play current sound"
+    echo "  ${CYAN}cn sound pool <dir>${RESET}      Random per-event sounds from <dir>/<event>/"
+    echo "  ${CYAN}cn sound test [event]${RESET}    Play current sound (or an event's pool)"
     echo "  ${CYAN}cn sound list${RESET}            Show available system sounds"
 }
