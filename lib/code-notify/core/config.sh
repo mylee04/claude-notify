@@ -612,9 +612,14 @@ has_legacy_global_claude_hooks() {
         return 1
     fi
 
+    # Every pattern must pin the END of the command (a closing JSON quote), or
+    # it also matches the current tool-scoped shape. `notifier.sh PreToolUse`
+    # unanchored matched today's `notifier.sh PreToolUse claude` ask_user hook,
+    # so any install with ask_user enabled reported REPAIR NEEDED forever and
+    # `cn on claude` rewrote settings.json on every run.
     grep -q 'claude-notify' "$file" ||
         grep -qE 'notifier\.sh (notification|stop)"' "$file" ||
-        grep -q 'notifier.sh PreToolUse' "$file" ||
+        grep -qE 'notifier\.sh PreToolUse"' "$file" ||
         grep -qE 'notify\.ps1.* (notification|stop)"' "$file" ||
         grep -qE 'notify\.ps1.* PreToolUse' "$file"
 }

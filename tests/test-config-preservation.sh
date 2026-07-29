@@ -1307,6 +1307,88 @@ EOF
     return $?
 }
 
+# A current install must NOT read as legacy. The ask_user alert type registers
+# `notifier.sh PreToolUse claude`, and an unanchored legacy grep matched it —
+# every such install reported REPAIR NEEDED forever and `cn on claude` rewrote
+# settings.json on every run instead of reporting "already enabled".
+run_test_current_claude_hooks_not_legacy() {
+    local test_dir
+    test_dir=$(mktemp -d)
+    trap 'rm -rf "$test_dir"' RETURN
+
+    export HOME="$test_dir"
+    export CLAUDE_HOME="$test_dir/.claude"
+    mkdir -p "$CLAUDE_HOME/notifications"
+
+    (
+        source "$SCRIPT_DIR/../lib/code-notify/utils/colors.sh"
+        source "$SCRIPT_DIR/../lib/code-notify/utils/detect.sh"
+        source "$SCRIPT_DIR/../lib/code-notify/core/config.sh"
+        source "$SCRIPT_DIR/../lib/code-notify/commands/global.sh"
+
+        is_tool_installed() { return 0; }
+
+        echo ""
+        echo "=== Testing current Claude hooks are not flagged as legacy ==="
+
+        # register_ask_user_hook is a no-op unless ask_user is enabled.
+        mkdir -p "$(dirname "$NOTIFY_TYPES_FILE")"
+        printf '%s\n' "idle_prompt|ask_user" > "$NOTIFY_TYPES_FILE"
+
+        # Build the settings the current code writes, ask_user included.
+        if ! enable_hooks_in_settings; then
+            echo "❌ Failed to write current Claude hooks"
+            exit 1
+        fi
+        register_ask_user_hook "$GLOBAL_SETTINGS_FILE" \
+            "$(get_global_claude_pre_tool_use_command)" || {
+            echo "❌ Failed to register the ask_user PreToolUse hook"
+            exit 1
+        }
+
+        if ! grep -qF "notifier.sh PreToolUse claude" "$GLOBAL_SETTINGS_FILE"; then
+            echo "❌ Test setup did not produce an ask_user PreToolUse hook"
+            cat "$GLOBAL_SETTINGS_FILE"
+            exit 1
+        fi
+
+        if claude_global_hooks_need_repair; then
+            echo "❌ Current Claude hooks were wrongly flagged as legacy"
+            cat "$GLOBAL_SETTINGS_FILE"
+            exit 1
+        fi
+        echo "✅ Current Claude hooks (with ask_user) are not flagged for repair"
+
+        # The anchored pattern must still catch the genuinely legacy shape.
+        cat > "$GLOBAL_SETTINGS_FILE" << EOF
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/notifications/notifier.sh PreToolUse"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+        if ! claude_global_hooks_need_repair; then
+            echo "❌ Legacy tool-less PreToolUse hook was not flagged for repair"
+            cat "$GLOBAL_SETTINGS_FILE"
+            exit 1
+        fi
+        echo "✅ Legacy tool-less PreToolUse hook is still detected"
+    )
+
+    return $?
+}
+
 echo "============================================"
 echo "Config Preservation Bug Fix Tests"
 echo "============================================"
@@ -1379,6 +1461,9 @@ run_test_codex_unrelated_notify_preserved || fail "Codex unrelated notify preser
 
 # Test 9: Legacy claude-notify hook configs are repaired in place
 run_test_legacy_claude_hooks_repair || fail "Legacy Claude hook repair test failed"
+
+# Test 9b: A current install is never mistaken for a legacy one
+run_test_current_claude_hooks_not_legacy || fail "Current Claude hooks legacy misdetection test failed"
 
 # Test 10: Claude detection only matches current hooks and preserves unrelated hook entries
 if command -v jq &> /dev/null; then
