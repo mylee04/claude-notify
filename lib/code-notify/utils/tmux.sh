@@ -718,8 +718,12 @@ TMUX_DIALOG_NOTIFY_SECONDS="${CODE_NOTIFY_TMUX_DIALOG_NOTIFY_SECONDS:-5}"
 #
 # Stillness, not position, is what keeps the scrollback from lying. The
 # interrupt line stays rendered after the user submits the next prompt, but a
-# working agent repaints its elapsed counter every second, so the fingerprint
-# never holds still and the watch cannot fire on a live turn. A turn that ends
+# working agent normally repaints its elapsed counter every second, so the
+# fingerprint does not hold still. Normally, but not always — a working line has
+# been observed frozen mid-turn (see TMUX_INTERRUPT_QUIET_SECONDS), and a still
+# pane is then indistinguishable from an ended one. Stillness is therefore a
+# necessary condition and not a sufficient one: TMUX_BUSY_MARKERS vetoes this
+# path outright when the capture shows a turn in flight. A turn that ends
 # normally has its marker taken down by the real Stop hook, leaving nothing for
 # this watch to act on, and a turn paused for approval drops the marker too.
 # Codex is listed even though its settle watch (TMUX_SETTLE_AGENTS) already
@@ -735,9 +739,14 @@ TMUX_INTERRUPT_WATCH_AGENTS="${CODE_NOTIFY_TMUX_INTERRUPT_WATCH_AGENTS:-claude|c
 # name. Codex instead renders "■ Conversation interrupted - tell the model
 # what to do differently." — a different wording, hence the alternation.
 # Anchored past the leading box-drawing decoration like TMUX_DIALOG_MARKERS, so
-# prose mentioning an interruption mid-line does not match. The `-` (not `:-`)
-# expansion makes an explicit empty value stick, which disables the watch.
-TMUX_INTERRUPT_MARKERS="${CODE_NOTIFY_TMUX_INTERRUPT_MARKERS-^[^A-Za-z]*(Interrupted|Conversation interrupted)([[:space:]]|$)}"
+# prose mentioning an interruption mid-line does not match. Digits are excluded
+# from that leading run even though no real interrupt line starts with one: the
+# agent's own tool output renders line-numbered file content ("1779      "  ⎿
+# Interrupted · …"; do" from a Read, an edit hunk or grep -n), and a leading run
+# that allowed digits made every such row read as a cancelled turn. That
+# false positive is the dangerous direction — see the veto below. The `-` (not
+# `:-`) expansion makes an explicit empty value stick, which disables the watch.
+TMUX_INTERRUPT_MARKERS="${CODE_NOTIFY_TMUX_INTERRUPT_MARKERS-^[^A-Za-z0-9]*(Interrupted|Conversation interrupted)([[:space:]]|$)}"
 # Seconds the interrupt line must stay on a still pane before the marker is
 # retired. The check rides the agent-exit poll, so the effective latency is the
 # first tick past this age. 0 disables the watch.
@@ -1480,7 +1489,7 @@ tmux_agent_exit_sweep() {
     local current_pid current_since current_settle_since current_badge_only current_gen
     local ipane isince ifp1 ifp2 istate iagent iproject
     local dialog_ctx dialog_since dpane dagent dproject dialog_content
-    local interrupt_pane interrupt_fp interrupt_since interrupt_content interrupt_needed
+    local interrupt_pane interrupt_fp interrupt_since interrupt_content interrupt_needed interrupt_seen
     now=$(date +%s)
     # orig (the badge marker) reads last: it is the only field that may embed
     # "|" (a window name), and read folds any remainder into the final var.
@@ -1665,22 +1674,75 @@ tmux_agent_exit_sweep() {
                 # ended, so it earns the short threshold. A pane with no such
                 # line still earns the long one (see
                 # TMUX_INTERRUPT_QUIET_SECONDS — several cancel paths leave no
-                # text at all), but only once the capture also rules out a turn
-                # still in flight: a working line, frozen or animating
-                # (TMUX_BUSY_MARKERS), or an approval dialog, which is a pause
-                # the notification hooks own. A capture that qualifies under
-                # neither threshold falls through to the baseline reset below.
-                # Switching thresholds mid-countdown needs no special handling:
-                # whatever made a line appear or vanish also moved the
-                # fingerprint, so the next tick re-baselines anyway.
+                # text at all), but only once the capture rules out an approval
+                # dialog, which is a pause the notification hooks own. A capture
+                # that qualifies under neither threshold falls through to the
+                # baseline reset below. Switching thresholds mid-countdown needs
+                # no special handling: whatever made a line appear or vanish
+                # also moved the fingerprint, so the next tick re-baselines
+                # anyway.
+                #
+                # A working line, frozen or animating (TMUX_BUSY_MARKERS), vetoes
+                # BOTH thresholds, not just the quiet one. A pane demonstrably
+                # showing work in flight is not a pane whose turn ended, whatever
+                # text it also carries — and it can carry a great deal, since the
+                # match spans the whole visible pane and the agent's own tool
+                # output quotes interrupt lines out of source files.
+                #
+                # The cost is that a genuine Escape on a pane still displaying a
+                # busy-looking row does not retire the marker at
+                # TMUX_INTERRUPT_SECONDS; it waits for the next prompt. That is
+                # the pre-watch behaviour — bounded by the turn and
+                # self-correcting the moment the user types. The inverse error is
+                # not: a false teardown blanks a live turn's indicator silently,
+                # and nothing re-lights it mid-turn, so the spinner stays dark for
+                # an unbounded stretch while the agent works. Same asymmetry
+                # TMUX_BUSY_MARKERS is argued from; it governs the marker-text
+                # path too, whose false-positive direction is the dangerous one.
                 interrupt_needed=0
-                if (( TMUX_INTERRUPT_SECONDS > 0 )) &&
-                    [[ "$(tmux_interrupt_flag "$interrupt_content")" == "1" ]]; then
-                    interrupt_needed="$TMUX_INTERRUPT_SECONDS"
-                elif (( TMUX_INTERRUPT_QUIET_SECONDS > 0 )) &&
-                    [[ "$(tmux_busy_flag "$interrupt_content")" != "1" ]] &&
-                    [[ "$(tmux_resume_poll_dialog_flag "$interrupt_content")" != "1" ]]; then
-                    interrupt_needed="$TMUX_INTERRUPT_QUIET_SECONDS"
+                interrupt_seen=$(tmux_interrupt_flag "$interrupt_content")
+                if [[ "$(tmux_busy_flag "$interrupt_content")" != "1" ]]; then
+                    if [[ "$interrupt_seen" == "1" ]]; then
+                        interrupt_needed="$TMUX_INTERRUPT_SECONDS"
+                    elif (( TMUX_INTERRUPT_QUIET_SECONDS > 0 )) &&
+                        [[ "$(tmux_resume_poll_dialog_flag "$interrupt_content")" != "1" ]]; then
+                        interrupt_needed="$TMUX_INTERRUPT_QUIET_SECONDS"
+                    fi
+                elif [[ "$interrupt_seen" == "1" ]]; then
+                    # Vetoed, but the interrupt line is up — so this turn is
+                    # over as far as any watch can tell, and the settle watch
+                    # below must not be the one to act on it. Settle has no
+                    # busy veto of its own and fires on stillness alone, so
+                    # falling through to it would reach the user as the
+                    # synthetic "Codex is done" completion plus an idle nudge:
+                    # precisely what this watch pre-empts settle to suppress
+                    # (see TMUX_INTERRUPT_WATCH_AGENTS). Before the veto the
+                    # teardown's `continue` kept settle from ever seeing an
+                    # interrupted pane; hold its countdown at zero instead.
+                    #
+                    # Deliberately narrow: only a pane actually showing an
+                    # interrupt line. A blanket busy veto on settle would be the
+                    # wrong trade — TMUX_BUSY_MARKERS matches ordinary bullet
+                    # rows, and a Codex /review whose output happens to contain
+                    # one would lose its completion notification altogether,
+                    # which is the very hook-less case settle exists to cover.
+                    #
+                    # Known gap, accepted: this keys on the capture, not the
+                    # turn. If the interrupt row later reflows out of the
+                    # visible pane while a busy-matching row survives it, the
+                    # refresh stops and settle eventually synthesizes after all.
+                    # Latching "this turn was interrupted" until the next prompt
+                    # would close it, but at a worse price: TMUX_INTERRUPT_MARKERS
+                    # also matches a cancelled TOOL call, after which the turn
+                    # carries on, so one false or mid-turn match would silently
+                    # cost that turn its completion. A spurious toast is bounded,
+                    # visible and self-correcting; a swallowed completion leaves
+                    # the marker up to the 4h TTL with nothing to tell the user.
+                    # Same asymmetry the rest of this watch is built on — so the
+                    # gap stays until an interrupt signal narrower than the
+                    # marker text (a turn-level one) is available to latch.
+                    tmux set-option -w -t "$window_id" \
+                        @code_notify_settle_since "$now" 2>/dev/null
                 fi
                 if (( interrupt_needed > 0 )); then
                     # Snapshot values, not fresh reads: only the arm and this

@@ -1634,6 +1634,16 @@ pass "interrupt watch arms for the listed agents only"
     || fail "the working spinner's 'esc to interrupt' hint must not match"
 [[ "$(tmux_interrupt_flag "the request was interrupted by a timeout")" == "0" ]] \
     || fail "prose mentioning an interruption mid-line must not match"
+# The agent quoting an interrupt line out of a source file is not an interrupt.
+# Claude Code prefixes tool output with line numbers, so the leading run of
+# non-alphabetics must exclude digits or a Read of this very file reads as a
+# cancelled turn — observed blanking a live turn's spinner for its whole run.
+[[ "$(tmux_interrupt_flag "1779      \"  ⎿  Interrupted · What should Claude do instead?\"; do")" == "0" ]] \
+    || fail "a line-numbered rendering of an interrupt line must not match"
+[[ "$(tmux_interrupt_flag "   42→  ⎿  Interrupted · What should Claude do instead?")" == "0" ]] \
+    || fail "a line-numbered read of an interrupt line must not match"
+[[ "$(tmux_interrupt_flag "+  ⎿  Interrupted · What should Claude do instead?")" == "1" ]] \
+    || fail "excluding digits must not disturb other leading decoration"
 [[ "$(CODE_NOTIFY_TMUX_INTERRUPT_MARKERS= ; TMUX_INTERRUPT_MARKERS= ; tmux_interrupt_flag "  ⎿  Interrupted · x")" == "0" ]] \
     || fail "an empty marker set should disable detection"
 pass "interrupt markers cover claude, antigravity and codex without false hits"
@@ -1865,6 +1875,55 @@ tmux_agent_exit_sweep || fail "transcript-view tick should succeed"
 tmux_running_stop || fail "running-stop after the frozen-spinner case should succeed"
 pass "a frozen or hidden working line vetoes the quiet interrupt path"
 
+# --- a working line vetoes the marker-text path too, not just the quiet one ---
+# The observed bug: an agent editing this very file rendered a line-numbered
+# "Interrupted" row into its own tool output, the pane went still in the
+# transcript view, and 5s later the sweep tore down a live turn's indicator. It
+# stayed dark for the rest of the turn — nothing re-lights mid-turn. The digit
+# fix above stops that particular capture matching; this veto is the backstop
+# for every other way an interrupt line can end up on a working pane.
+{
+    printf '%s\n' "❯ fix the interrupt watch"
+    printf '%s\n' "⏺ Read(tests/test-tmux-badge.sh)"
+    printf '%s\n' "  ⎿  Interrupted · What should Claude do instead?"
+    printf '%s\n' "✳ Cascading… (7m 6s · ↓ 8.3k tokens)"
+} > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the busy-with-interrupt-line case should succeed"
+[[ "$(window_name)" == "🌕 zsh" ]] || fail "precondition: running icon should be up"
+tmux_agent_exit_sweep || fail "busy-with-interrupt-line tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "a working line must stop the interrupt line starting any countdown"
+# Hold the pane perfectly still and age it well past TMUX_INTERRUPT_SECONDS —
+# the exact conditions that fired the false teardown — then poll twice.
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s\n' "$(cat "$state_dir/%3.pane_content")" | cksum \
+    > "$state_dir/@2.@code_notify_interrupt_fp"
+tmux_agent_exit_sweep || fail "aged busy-with-interrupt-line tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a pane showing work in flight must keep its marker despite an interrupt line"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+tmux_agent_exit_sweep || fail "second aged busy-with-interrupt-line tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "the veto must hold across polls, not just the first"
+[[ "$(window_name)" == "🌕 zsh" ]] \
+    || fail "the live turn must keep its indicator lit (got: $(window_name))"
+# The transcript view is the likeliest way a real turn goes still with the line
+# up: the working row is not rendered at all, so only the busy marker for the
+# view itself stands between a live turn and a teardown.
+{
+    printf '%s\n' "  ⎿  Interrupted · What should Claude do instead?"
+    printf '%s\n' "  Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll"
+} > "$state_dir/%3.pane_content"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s\n' "$(cat "$state_dir/%3.pane_content")" | cksum \
+    > "$state_dir/@2.@code_notify_interrupt_fp"
+tmux_agent_exit_sweep || fail "transcript-view-with-interrupt-line tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a transcript-view pane must keep its marker despite an interrupt line"
+tmux_running_stop || fail "running-stop after the busy-veto case should succeed"
+pass "a working line vetoes the marker-text interrupt path"
+
 # --- an approval dialog suppresses the quiet path ---
 # A pane parked on a permission prompt is as still as a cancelled one, but it is
 # a pause the notification hooks own, not an ended turn: retiring here would
@@ -2006,6 +2065,52 @@ CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep
 [[ ! -f "$state_dir/@2.@code_notify_idle_watch" ]] \
     || fail "a silent interrupt teardown must not arm the idle nudge"
 pass "codex interrupt pre-empts the settle completion and the idle nudge"
+
+# --- ...and still pre-empts it when the pane also trips a busy marker ---
+# The busy veto must not hand a Codex interrupt back to the settle watch. Settle
+# has no busy veto of its own and fires purely on stillness, so a vetoed
+# interrupt would fall straight through to it and reach the user as exactly the
+# "Codex is done" completion plus idle nudge this watch exists to suppress. A
+# bullet row is enough to trip TMUX_BUSY_MARKERS and Codex transcripts are full
+# of them, so this is an ordinary interrupt screen, not a contrived one.
+{
+    printf '%s\n' "· Reviewing the diff…"
+    printf '%s\n' "■ Conversation interrupted - tell the model what to do differently."
+} > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=codex tmux_prompt_submit \
+    || fail "codex prompt-submit for the busy-vetoed interrupt should succeed"
+[[ -f "$state_dir/@2.@code_notify_settle_pane" ]] \
+    || fail "precondition: codex should still arm its settle watch"
+tmux_agent_exit_sweep || fail "busy-vetoed codex baseline tick should succeed"
+: > "$settle_notify_log"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_settle_since"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep \
+    || fail "busy-vetoed codex interrupt tick should succeed"
+[[ ! -s "$settle_notify_log" ]] \
+    || fail "a busy-vetoed codex interrupt must not synthesize a completion (got: $(cat "$settle_notify_log"))"
+[[ ! -f "$state_dir/@2.@code_notify_idle_watch" ]] \
+    || fail "a busy-vetoed codex interrupt must not arm the idle nudge"
+tmux_running_stop || fail "running-stop after the busy-vetoed codex case should succeed"
+pass "a busy-vetoed codex interrupt does not fall through to the settle completion"
+
+# --- ...but the same busy row alone does NOT cost a stall its completion ---
+# The counterpart to the case above, and the reason the suppression keys on the
+# interrupt line rather than on the busy flag: a hook-less Codex stall is
+# exactly what settle exists to notify, and its transcript may well end on a
+# bullet row. Vetoing settle on the busy flag alone would silently swallow that
+# completion — a worse failure than the one being fixed.
+printf '%s\n' "· Reviewing the diff…" > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=codex tmux_prompt_submit \
+    || fail "codex prompt-submit for the busy-row stall should succeed"
+tmux_agent_exit_sweep || fail "busy-row stall baseline tick should succeed"
+: > "$settle_notify_log"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_settle_since"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep \
+    || fail "busy-row stall settle tick should succeed"
+[[ -s "$settle_notify_log" ]] \
+    || fail "a stall with no interrupt line must still synthesize its completion"
+pass "a busy row alone does not suppress the codex settle completion"
 
 # --- a preserved stop's badge-only settle watch outranks the interrupt watch ---
 # That stop withheld its terminal badge for the settle reconcile to apply; a
