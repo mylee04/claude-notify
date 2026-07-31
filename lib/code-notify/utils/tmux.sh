@@ -742,6 +742,140 @@ TMUX_INTERRUPT_MARKERS="${CODE_NOTIFY_TMUX_INTERRUPT_MARKERS-^[^A-Za-z]*(Interru
 # retired. The check rides the agent-exit poll, so the effective latency is the
 # first tick past this age. 0 disables the watch.
 TMUX_INTERRUPT_SECONDS="${CODE_NOTIFY_TMUX_INTERRUPT_SECONDS:-5}"
+# Seconds a still pane with NO interrupt line must hold before the marker is
+# retired anyway. Not every cancelled turn leaves text behind, so the marker
+# pattern above is a fast path, not the whole watch:
+#
+#   - Escape pressed at a permission prompt rejects the tool AND ends the turn,
+#     and the only record is "[Request interrupted by user for tool use]" — an
+#     API-side marker Claude Code renders as nothing at all.
+#   - Claude Code folds finished steps into an activity summary ("Made 1
+#     scratchpad edit +26, ran 1 shell command"), which hides the tool-level
+#     "Interrupted by user" line the pattern would otherwise have caught.
+#
+# In both cases the turn is over, no hook fires, and the pane holds still
+# forever, so text matching alone leaves the spinner running until the 4-hour
+# TTL.
+#
+# Stillness alone cannot stand in for the missing text, because a working
+# agent's pane does not reliably keep moving: Claude Code's "✶ Choreographing…
+# (5m 14s · ↓ 15.0k tokens)" line has been observed to stop repainting while the
+# turn is very much still running. A frozen working line and an ended turn look
+# identical to a fingerprint. So this path needs the pane to be still AND to
+# carry no evidence of a live turn — TMUX_BUSY_MARKERS for the working line
+# (frozen or not, its presence is what counts) and the dialog patterns for an
+# approval prompt, which is a pause the notification hooks own rather than an
+# ended turn. What is left is a pane showing a finished transcript and an empty
+# input box, which is exactly what an unrecorded cancel leaves behind.
+#
+# The threshold is still deliberately far longer than TMUX_INTERRUPT_SECONDS:
+# the interrupt line is proof, absence of a working line is inference, and the
+# margin buys time for a turn that is between renders to put its working line
+# back up. 0 disables, leaving the marker-text fast path as the whole watch.
+#
+# This is a sub-path of the interrupt watch, not a watch of its own:
+# TMUX_INTERRUPT_SECONDS of 0 has always meant "no interrupt watch at all" and
+# still does, so it switches this off too. Someone who turned the watch off must
+# not have it quietly turned back on by an upgrade.
+TMUX_INTERRUPT_QUIET_SECONDS="${CODE_NOTIFY_TMUX_INTERRUPT_QUIET_SECONDS:-20}"
+# Detects a live turn's working line in a captured pane, used only to veto the
+# quiet path above (never the marker-text path, which is evidence in its own
+# right). Deliberately generous: a false match merely leaves the indicator up
+# until the next prompt — today's behaviour — whereas a miss retires a working
+# agent's spinner, so the pattern errs toward seeing a turn in flight.
+#
+# Nothing here may key on the wording: Claude Code picks the verb at random from
+# a large pool, and the same pool feeds both states — "✢ Precipitating…",
+# "✶ Choreographing…" while working, "✻ Churned for 14s", "✻ Cogitated for
+# 1m 43s", "✻ Sautéed for 1m 8s" once done. Enumerating verbs would rot on the
+# next release. What separates the two states is punctuation, and that has held:
+# a turn in flight trails an ellipsis, a finished one reads "<verb> for
+# <duration>" with none.
+#
+# Every alternative matches a whole rendered row, anchored at both ends where the
+# row has a known shape — never a fragment that could land mid-sentence. That is
+# not tidiness. This veto is persistent: an alternative that fires on ordinary
+# transcript prose does not over-match once, it pins the veto on for as long as
+# that line stays on screen, which is precisely the stuck indicator this path
+# exists to clear, and it does so invisibly. A veto must be refutable by the next
+# repaint; prose never is.
+#
+# That asymmetry decides the whole trade, and it runs the opposite way to the
+# usual instinct. Matching too little costs a spinner cleared early — bounded by
+# the turn, and the Stop hook still delivers the completion. Matching too much
+# costs the feature, silently and without bound. So the rule is: anchor the rows
+# this codebase has actually captured, and widen only when someone captures a
+# real rendering that the pattern misses. Speculative tolerance for row shapes
+# nobody has seen buys nothing — an agent whose working row goes unrecognised
+# still has the marker-text path above and, for Codex, the settle watch — while
+# every loosened anchor is another sentence that can freeze the indicator.
+#
+# Hence four alternatives, three for the working line and one for not being able
+# to see it:
+#   - a spinner frame opening the line, then a word, then an ellipsis somewhere
+#     after it: "✢ Precipitating…", "· Precipitating… (8m 0s · ↓ 18.0k tokens)".
+#     Both the Unicode ellipsis and three ASCII dots count, since a terminal
+#     without the glyph renders the latter. The frames are spelled as an
+#     alternation rather than a bracket expression so the match stays exact
+#     under a non-UTF-8 locale, where a multibyte bracket expression degrades
+#     into a set of individual bytes.
+#   - the same ellipsis-then-elapsed shape on a tool row, which carries no
+#     spinner frame of its own: "⎿  Running… (12s)". Anchored on the row's ⎿
+#     prefix. Without that anchor it matched any transcript line of the form
+#     "Retrying… (30s)" — model output, a quoted log, a paragraph of this very
+#     file — and vetoed teardown until it scrolled off.
+#   - a bullet-led working row whose counter group ends the line:
+#     "• Working (12s • Esc to interrupt)". Claude Code's own hint is already
+#     covered by the frame alternative above, so this one exists for the other
+#     watched agents — and its bullet has NOT been captured from a real pane, it
+#     is a guess. Kept strict precisely because of that: anchored to a leading
+#     bullet and a trailing "…interrupt)" at end of line, a wrong guess simply
+#     never fires, which costs no more than omitting it. Loosening it to "any
+#     paren holding a counter and the word interrupt" was tried and reverted —
+#     it matched "The task waits (30s; Esc to interrupt) before retrying", a
+#     sentence that would then freeze the indicator for as long as it stayed on
+#     screen. Replace the bullet when a real capture lands; do not widen it to
+#     cover shapes nobody has seen.
+# The last covers a pane where the working line cannot be seen at all rather
+# than one where it is absent: Claude Code's Ctrl+O transcript view replaces the
+# whole bottom region, footer and all, so a live turn shows no working line
+# there. Matched on the footer as a whole row — opener, the word transcript, then
+# " · ctrl+o to toggle" and either the end of the line or more " · " hints
+# ("Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll · …"). Every part
+# is load-bearing, and the looser forms were each tried and reverted: the opener
+# alone matches "Showing the full transcript below", and dropping the separator
+# structure matches "Showing the menu; use ctrl+o to toggle details". Both are
+# sentences an agent might write about its own output, and both would freeze the
+# indicator for as long as they stayed on screen. "I cannot see it" must veto
+# exactly like "I can see it" — the
+# alternative is retiring a working agent's spinner because the user happened to
+# be reading the transcript. A cancelled turn parked in that view keeps its
+# indicator until the view is closed or the next prompt lands, which is the
+# pre-watch behaviour and the safe side of the trade.
+#
+# The completion line deliberately matches none of them, whatever verb it drew —
+# it has no ellipsis — so a finished turn does not veto its own teardown.
+#
+# Left out on purpose: the in-progress activity summary ("⏺ Thinking for 5s,
+# running 3 shell commands…"). It opens with the ordinary assistant bullet, so
+# matching it would also match any assistant paragraph that happens to trail an
+# ellipsis — and that line sits in the transcript for good, which would veto the
+# quiet path for the rest of the session rather than just once. The working line
+# accompanies it anyway.
+#
+# Matched against the whole visible pane rather than the rows above the input
+# box, where the working line actually lives, because that distance depends on
+# how tall the user's input box and status lines are and guessing it wrong means
+# missing a live turn. The structural anchors above are what make a whole-pane
+# search affordable: they keep the match to lines the TUI draws, which a repaint
+# can take back, rather than to transcript text, which it cannot. One residual
+# case survives on purpose — a pane whose transcript QUOTES a working line
+# verbatim (reviewing this file, say) vetoes its own teardown until that text
+# scrolls off.
+#
+# The `-` (not `:-`) expansion makes an explicit empty value stick, which drops
+# the veto.
+TMUX_BUSY_MARKERS="${CODE_NOTIFY_TMUX_BUSY_MARKERS-^[[:space:]]*(✻|✽|✶|✳|✢|∗|·|\*)[[:space:]]+[A-Za-z].*(…|\.\.\.)|^[[:space:]]*⎿.*…[[:space:]]*\([0-9]+[hms]|^[[:space:]]*•[[:space:]]+[A-Za-z].*\([0-9]+[hms][^)]*[Ee]sc to interrupt[^)]*\)[[:space:]]*$|^[[:space:]]*Showing .*transcript[[:space:]]+·[[:space:]]+ctrl\+o to toggle([[:space:]]+·.*)?$}"
 
 tmux_running_enabled() {
     [[ "${CODE_NOTIFY_TMUX_RUNNING:-}" != "false" ]] && tmux_badge_enabled
@@ -979,6 +1113,21 @@ tmux_interrupt_flag() {
     # being parsed as grep options.
     if [[ -n "$TMUX_INTERRUPT_MARKERS" ]] &&
         printf '%s\n' "$content" | grep -qE -e "$TMUX_INTERRUPT_MARKERS" 2>/dev/null; then
+        printf '1'
+        return
+    fi
+    printf '0'
+}
+
+# "1" when a captured pane still shows a live turn's working line (see
+# TMUX_BUSY_MARKERS). Unlike the interrupt and dialog flags this is a veto, not
+# a trigger, so an empty pattern set answers 0 — no pattern means no veto.
+tmux_busy_flag() {
+    local content="$1"
+    # -e guards patterns that begin with "-" (a user-supplied override) from
+    # being parsed as grep options.
+    if [[ -n "$TMUX_BUSY_MARKERS" ]] &&
+        printf '%s\n' "$content" | grep -qE -e "$TMUX_BUSY_MARKERS" 2>/dev/null; then
         printf '1'
         return
     fi
@@ -1290,10 +1439,12 @@ tmux_agent_exit_schedule_sweep() {
     q_dialog_options=$(tmux_focus_shell_quote "$TMUX_DIALOG_OPTIONS")
     # Same for the interrupt watch: the fired sweep matches the marker and
     # measures the stillness window itself.
-    local q_int_secs q_int_agents q_int_markers
+    local q_int_secs q_int_agents q_int_markers q_int_quiet q_busy_markers
     q_int_secs=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_SECONDS")
     q_int_agents=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_WATCH_AGENTS")
     q_int_markers=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_MARKERS")
+    q_int_quiet=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_QUIET_SECONDS")
+    q_busy_markers=$(tmux_focus_shell_quote "$TMUX_BUSY_MARKERS")
     inner="cur=\$($q_tmux -S $q_socket show-options -gqv @code_notify_agent_exit_sweep_scheduled 2>/dev/null); "
     inner+="if [ \"\$cur\" != $q_token ]; then exit 0; fi; "
     inner+="$q_tmux -S $q_socket set-option -gu @code_notify_agent_exit_sweep_scheduled; "
@@ -1308,6 +1459,8 @@ tmux_agent_exit_schedule_sweep() {
     inner+="CODE_NOTIFY_TMUX_INTERRUPT_SECONDS=$q_int_secs "
     inner+="CODE_NOTIFY_TMUX_INTERRUPT_WATCH_AGENTS=$q_int_agents "
     inner+="CODE_NOTIFY_TMUX_INTERRUPT_MARKERS=$q_int_markers "
+    inner+="CODE_NOTIFY_TMUX_INTERRUPT_QUIET_SECONDS=$q_int_quiet "
+    inner+="CODE_NOTIFY_TMUX_BUSY_MARKERS=$q_busy_markers "
     inner+="bash $q_lib agent-exit-sweep; fi"
     inner="${inner//\#/##}"
     # Claim before arming (see tmux_timer_chain_token); a failed arm rolls
@@ -1327,7 +1480,7 @@ tmux_agent_exit_sweep() {
     local current_pid current_since current_settle_since current_badge_only current_gen
     local ipane isince ifp1 ifp2 istate iagent iproject
     local dialog_ctx dialog_since dpane dagent dproject dialog_content
-    local interrupt_pane interrupt_fp interrupt_since interrupt_content
+    local interrupt_pane interrupt_fp interrupt_since interrupt_content interrupt_needed
     now=$(date +%s)
     # orig (the badge marker) reads last: it is the only field that may embed
     # "|" (a window name), and read folds any remainder into the final var.
@@ -1480,10 +1633,13 @@ tmux_agent_exit_sweep() {
             fi
         fi
         # Interrupt watch (see TMUX_INTERRUPT_WATCH_AGENTS): Escape cancels a
-        # turn without firing any hook, so the agent's own interrupt line
-        # sitting on a pane that has stopped repainting is the only evidence
-        # the run is over. Retire the marker silently — no synthetic event,
-        # unlike the settle watch: the user pressed Escape and is right there.
+        # turn without firing any hook, so a pane that has stopped repainting is
+        # the only evidence the run is over — carrying the agent's own interrupt
+        # line (TMUX_INTERRUPT_SECONDS) or, for the cancel paths that leave no
+        # text behind, simply quiet for longer
+        # (TMUX_INTERRUPT_QUIET_SECONDS). Retire the marker silently — no
+        # synthetic event, unlike the settle watch: the user pressed Escape and
+        # is right there.
         # Same observability guards as the watches above; the marker epoch is
         # re-read under the transition lock so a turn that started between the
         # snapshot and now keeps its indicator.
@@ -1499,11 +1655,34 @@ tmux_agent_exit_sweep() {
             [[ -z "$settle_badge_only" ]] &&
             (( now - since < TMUX_RUNNING_TTL )) &&
             [[ "${TMUX_INTERRUPT_SECONDS:-0}" =~ ^[0-9]+$ ]] &&
+            [[ "${TMUX_INTERRUPT_QUIET_SECONDS:-0}" =~ ^[0-9]+$ ]] &&
             (( TMUX_INTERRUPT_SECONDS > 0 )); then
             live=1
             if [[ "$(tmux display-message -p -t "$interrupt_pane" '#{window_id}' 2>/dev/null)" == "$window_id" ]] &&
                 interrupt_content=$(tmux capture-pane -p -t "$interrupt_pane" 2>/dev/null); then
-                if [[ "$(tmux_interrupt_flag "$interrupt_content")" == "1" ]]; then
+                # How long this capture has to hold still before the marker
+                # comes down. The agent's own interrupt line is proof the turn
+                # ended, so it earns the short threshold. A pane with no such
+                # line still earns the long one (see
+                # TMUX_INTERRUPT_QUIET_SECONDS — several cancel paths leave no
+                # text at all), but only once the capture also rules out a turn
+                # still in flight: a working line, frozen or animating
+                # (TMUX_BUSY_MARKERS), or an approval dialog, which is a pause
+                # the notification hooks own. A capture that qualifies under
+                # neither threshold falls through to the baseline reset below.
+                # Switching thresholds mid-countdown needs no special handling:
+                # whatever made a line appear or vanish also moved the
+                # fingerprint, so the next tick re-baselines anyway.
+                interrupt_needed=0
+                if (( TMUX_INTERRUPT_SECONDS > 0 )) &&
+                    [[ "$(tmux_interrupt_flag "$interrupt_content")" == "1" ]]; then
+                    interrupt_needed="$TMUX_INTERRUPT_SECONDS"
+                elif (( TMUX_INTERRUPT_QUIET_SECONDS > 0 )) &&
+                    [[ "$(tmux_busy_flag "$interrupt_content")" != "1" ]] &&
+                    [[ "$(tmux_resume_poll_dialog_flag "$interrupt_content")" != "1" ]]; then
+                    interrupt_needed="$TMUX_INTERRUPT_QUIET_SECONDS"
+                fi
+                if (( interrupt_needed > 0 )); then
                     # Snapshot values, not fresh reads: only the arm and this
                     # branch write them, and the marker epoch re-read under the
                     # lock below is what guards the turn-transition race. A
@@ -1513,7 +1692,7 @@ tmux_agent_exit_sweep() {
                         # First sighting, or the pane is still moving: re-baseline.
                         tmux set-option -w -t "$window_id" @code_notify_interrupt_fp "$fp_now" 2>/dev/null
                         tmux set-option -w -t "$window_id" @code_notify_interrupt_since "$now" 2>/dev/null
-                    elif (( now - interrupt_since >= TMUX_INTERRUPT_SECONDS )) &&
+                    elif (( now - interrupt_since >= interrupt_needed )) &&
                         tmux_running_transition_lock_acquire "$window_id"; then
                         transition_lock="$TMUX_RUNNING_TRANSITION_LOCKDIR"
                         transition_token="$TMUX_RUNNING_TRANSITION_LOCKTOKEN"
@@ -1548,8 +1727,11 @@ tmux_agent_exit_sweep() {
                         tmux_running_transition_lock_release "$transition_lock" "$transition_token"
                     fi
                 elif [[ -n "$interrupt_since$interrupt_fp" ]]; then
-                    # The line went away (the user answered the "what instead?"
-                    # prompt): the next sighting starts its own countdown.
+                    # Nothing to count: the turn is visibly alive again (a
+                    # working line or an approval dialog is up), or the quiet
+                    # path is disabled and the interrupt line went away, the
+                    # user having answered the "what instead?" prompt. The next
+                    # qualifying capture starts its own countdown.
                     tmux set-option -wu -t "$window_id" @code_notify_interrupt_fp 2>/dev/null
                     tmux set-option -wu -t "$window_id" @code_notify_interrupt_since 2>/dev/null
                 fi

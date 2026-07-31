@@ -1650,8 +1650,10 @@ CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
 tmux_agent_exit_sweep || fail "working-pane interrupt tick should succeed"
 [[ -f "$state_dir/@2.@code_notify_running" ]] \
     || fail "a working pane without an interrupt line must keep the marker"
+# The quiet path (see TMUX_INTERRUPT_QUIET_SECONDS) does not start counting
+# either: this pane still shows a working line, which vetoes it outright.
 [[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
-    || fail "no interrupt line means no stillness countdown"
+    || fail "a visibly working pane must not start any stillness countdown"
 # Real geometry: Claude Code pins the input box to the bottom row but leaves
 # the transcript where it ended, so on a short session the interrupt line sits
 # near the TOP with dozens of blank rows below it. A tail-anchored match missed
@@ -1691,6 +1693,220 @@ CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep
 [[ ! -s "$settle_notify_log" ]] \
     || fail "an interrupt must not notify (got: $(cat "$settle_notify_log"))"
 pass "interrupted claude pane retires running state silently"
+
+# --- a cancel that leaves no text behind still retires the marker ---
+# Escape at a permission prompt rejects the tool AND ends the turn, and the only
+# record is "[Request interrupted by user for tool use]" — which Claude Code
+# renders as nothing. Claude Code also folds finished steps into an activity
+# summary, hiding the tool-level "Interrupted by user" line. So the pane below
+# is exactly what the user is left staring at: an ordinary transcript, an empty
+# input box, and a spinner that used to run until the 4-hour TTL.
+{
+    printf '%s\n' "❯ can Ctrl-X be used instead of alt-x?"
+    printf '%s\n' "⏺ ctrl-shift-x is unsupported by fzf outright."
+    printf '%s\n' "  Made 1 scratchpad edit +26, ran 1 shell command"
+    printf '%s\n' "─────────────────────"
+    printf '%s\n' "❯ "
+    printf '%s\n' "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
+} > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the textless cancel should succeed"
+[[ "$(window_name)" == "🌕 zsh" ]] || fail "precondition: running icon should be up"
+tmux_agent_exit_sweep || fail "first textless-cancel tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "the first quiet sighting only baselines; it must not retire the marker"
+# The quiet path must not fire on the interrupt-line threshold: the whole point
+# of the longer window is the margin over a working agent's per-second repaint.
+printf '%s' "$(( $(date +%s) - 10 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+tmux_agent_exit_sweep || fail "mid-quiet-window tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a line-less pane must outlast TMUX_INTERRUPT_SECONDS before retiring"
+: > "$settle_notify_log"
+printf '%s' "$(( $(date +%s) - 60 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep \
+    || fail "settled textless-cancel tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a quiet pane with no interrupt line should retire the running marker"
+[[ "$(window_name)" == "zsh" ]] \
+    || fail "the quiet teardown should restore the window name (got: $(window_name))"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_pane" ]] \
+    || fail "the quiet teardown should disarm the watch"
+[[ ! -s "$settle_notify_log" ]] \
+    || fail "a quiet teardown must not notify (got: $(cat "$settle_notify_log"))"
+pass "textless cancel retires running state silently"
+
+# --- a frozen working line vetoes the quiet path ---
+# Stillness is not proof the turn ended: Claude Code's working line has been
+# seen to stop repainting mid-turn, at which point a fingerprint cannot tell a
+# live turn from a dead one. The line's PRESENCE is what counts, so a pane held
+# artificially still with the line up must keep its indicator no matter how long
+# it has been quiet.
+# The verb is drawn at random from a pool shared by both states, so the match
+# has to live entirely in the punctuation: an ellipsis means in flight, "<verb>
+# for <duration>" with none means done. Every sample below is a real render.
+for line in \
+    "· Precipitating… (8m 0s · ↓ 18.0k tokens)" \
+    "✶ Choreographing… (5m 14s · ↓ 15.0k tokens)" \
+    "✢ Precipitating…" \
+    "✻ Thinking… (4s · esc to interrupt)" \
+    "✳ Saturating..." \
+    "* Precipitating...."; do
+    [[ "$(tmux_busy_flag "$line")" == "1" ]] \
+        || fail "a working line should read as busy (got 0 for: $line)"
+done
+[[ "$(tmux_busy_flag "  ⎿  Running… (12s)")" == "1" ]] \
+    || fail "a running tool row should read as busy"
+[[ "$(tmux_busy_flag "• Working (12s • Esc to interrupt)")" == "1" ]] \
+    || fail "a bullet-led working row should read as busy"
+[[ "$(tmux_busy_flag "  Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll")" == "1" ]] \
+    || fail "the transcript footer should read as busy"
+[[ "$(tmux_busy_flag "  Showing detailed transcript · ctrl+o to toggle")" == "1" ]] \
+    || fail "a footer with no trailing hints should read as busy"
+# Deliberately NOT matched. The bullet above is a guess — no capture of a
+# non-Claude working row exists — so these near-misses record the choice to keep
+# the anchor strict rather than widen it speculatively: a wrong guess that never
+# fires costs no more than omitting the alternative, whereas a loose one freezes
+# the indicator on any sentence it collides with. Replace the bullet (and add
+# cases here) when a real rendering is captured; do not widen to cover shapes
+# nobody has seen.
+for line in \
+    "▌ Working (12s • Esc to interrupt)" \
+    "● Thinking (3s · Esc to interrupt)" \
+    "  Working (12s • Esc to interrupt)"; do
+    [[ "$(tmux_busy_flag "$line")" == "0" ]] \
+        || fail "uncaptured working-row shapes are out of scope (got 1 for: $line)"
+done
+# Every alternative is anchored to rendered structure, because a match on
+# transcript prose does not over-match once — it pins the veto on for as long as
+# the line stays on screen, which is the stuck spinner this path exists to clear.
+# A veto has to be refutable by the next repaint.
+for line in \
+    "  Retrying… (30s)" \
+    "  Retrying… (30s) before giving up" \
+    "  I saw the log say Retrying… (30s) and gave up" \
+    "  press esc to interrupt the run" \
+    "  You can cancel (Esc to interrupt) while it runs" \
+    "  The task waits (30s; Esc to interrupt) before retrying" \
+    "  Showing the full transcript below" \
+    "  Showing the transcript, and ctrl+o is unrelated" \
+    "  Showing the menu; use ctrl+o to toggle details" \
+    "  Showing detailed transcript and ctrl+o to toggle it" \
+    "  ⎿  Read paste_buffer.sh (182 lines)" \
+    "  ⎿  Interrupted · What should Claude do instead?"; do
+    [[ "$(tmux_busy_flag "$line")" == "0" ]] \
+        || fail "transcript text must not read as busy (got 1 for: $line)"
+done
+for line in \
+    "✻ Baked for 4m 36s" \
+    "✻ Churned for 14s" \
+    "✻ Cogitated for 1m 43s" \
+    "✻ Sautéed for 1m 8s"; do
+    [[ "$(tmux_busy_flag "$line")" == "0" ]] \
+        || fail "a completion line must not read as busy (got 1 for: $line)"
+done
+[[ "$(tmux_busy_flag "  I waited a while… (about 3 minutes) before retrying")" == "0" ]] \
+    || fail "prose with an ellipsis and a parenthetical must not read as busy"
+[[ "$(tmux_busy_flag "  my attempts were blocked by the sandbox…")" == "0" ]] \
+    || fail "prose trailing an ellipsis must not read as busy"
+# The in-progress activity summary is deliberately not matched: it opens with the
+# ordinary assistant bullet, so matching it would veto on any paragraph that
+# happens to trail an ellipsis, permanently.
+[[ "$(tmux_busy_flag "⏺ Thinking for 5s, running 3 shell commands…")" == "0" ]] \
+    || fail "the assistant bullet must not read as busy"
+# Non-UTF-8 locales must not degrade a multibyte frame into loose byte matching.
+[[ "$(LC_ALL=C tmux_busy_flag "✻ Churned for 14s")" == "0" ]] \
+    || fail "a completion line must not read as busy under LC_ALL=C"
+[[ "$(LC_ALL=C tmux_busy_flag "· Precipitating… (8m 0s)")" == "1" ]] \
+    || fail "a working line should still read as busy under LC_ALL=C"
+[[ "$(LC_ALL=C tmux_busy_flag "  ⎿  Running… (12s)")" == "1" ]] \
+    || fail "a tool row should still read as busy under LC_ALL=C"
+[[ "$(LC_ALL=C tmux_busy_flag "  Retrying… (30s)")" == "0" ]] \
+    || fail "the ⎿ anchor must not degrade into byte matching under LC_ALL=C"
+[[ "$(LC_ALL=C tmux_busy_flag "  The task waits (30s; Esc to interrupt) before retrying")" == "0" ]] \
+    || fail "the hint anchor must hold under LC_ALL=C"
+[[ "$(LC_ALL=C tmux_busy_flag "  Showing the menu; use ctrl+o to toggle details")" == "0" ]] \
+    || fail "the footer anchor must hold under LC_ALL=C"
+[[ "$(LC_ALL=C tmux_busy_flag "  Showing detailed transcript · ctrl+o to toggle")" == "1" ]] \
+    || fail "the transcript footer should still read as busy under LC_ALL=C"
+[[ "$(LC_ALL=C tmux_busy_flag "• Working (12s • Esc to interrupt)")" == "1" ]] \
+    || fail "a bullet-led working row should still read as busy under LC_ALL=C"
+[[ "$(tmux_busy_flag "  Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll")" == "1" ]] \
+    || fail "the transcript view hides the working line, so it should read as busy"
+[[ "$(CODE_NOTIFY_TMUX_BUSY_MARKERS= ; TMUX_BUSY_MARKERS= ; tmux_busy_flag "✻ Thinking… (4s)")" == "0" ]] \
+    || fail "an empty busy-marker set should drop the veto"
+{
+    printf '%s\n' "❯ refactor the sweep"
+    printf '%s\n' "✻ Cogitated for 1m 43s"
+    printf '%s\n' "· Precipitating… (8m 0s · ↓ 18.0k tokens)"
+} > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the frozen-spinner case should succeed"
+tmux_agent_exit_sweep || fail "frozen-spinner tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "a frozen working line must not start the quiet countdown"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s\n' "$(cat "$state_dir/%3.pane_content")" | cksum \
+    > "$state_dir/@2.@code_notify_interrupt_fp"
+tmux_agent_exit_sweep || fail "aged frozen-spinner tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a pane frozen with its working line up must keep the running marker"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "a busy sighting should clear any stale quiet baseline"
+# The transcript view is the same story with the line invisible rather than
+# frozen: still a live turn, still no teardown.
+printf '%s' "  Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll" \
+    > "$state_dir/%3.pane_content"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s\n' "  Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll" | cksum \
+    > "$state_dir/@2.@code_notify_interrupt_fp"
+tmux_agent_exit_sweep || fail "transcript-view tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a pane in the transcript view must keep the running marker"
+tmux_running_stop || fail "running-stop after the frozen-spinner case should succeed"
+pass "a frozen or hidden working line vetoes the quiet interrupt path"
+
+# --- an approval dialog suppresses the quiet path ---
+# A pane parked on a permission prompt is as still as a cancelled one, but it is
+# a pause the notification hooks own, not an ended turn: retiring here would
+# drop the indicator while the agent is still mid-task, waiting on the user.
+{
+    printf '%s\n' "⏺ Bash(rm -rf build)"
+    printf '%s\n' "  Do you want to proceed?"
+    printf '%s\n' "  1. Yes"
+    printf '%s\n' "  2. No, and tell Claude what to do differently"
+} > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the dialog-suppression case should succeed"
+tmux_agent_exit_sweep || fail "dialog-pane tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "an on-screen dialog must not start the quiet countdown"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s\n' "$(cat "$state_dir/%3.pane_content")" | cksum \
+    > "$state_dir/@2.@code_notify_interrupt_fp"
+tmux_agent_exit_sweep || fail "aged dialog-pane tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a pane parked on an approval dialog must keep its running marker"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "a dialog sighting should clear any stale quiet baseline"
+pass "approval dialog suppresses the quiet interrupt path"
+
+# --- the quiet path can be switched off, leaving the marker-text watch ---
+printf '%s' "an ordinary still transcript" > "$state_dir/%3.pane_content"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s\n' "an ordinary still transcript" | cksum \
+    > "$state_dir/@2.@code_notify_interrupt_fp"
+( TMUX_INTERRUPT_QUIET_SECONDS=0; tmux_agent_exit_sweep ) \
+    || fail "quiet-path-disabled tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "quiet seconds of 0 should disable the line-less teardown"
+# Turning the watch off has always meant TMUX_INTERRUPT_SECONDS=0; the quiet
+# sub-path must not resurrect it for someone who set that.
+( TMUX_INTERRUPT_SECONDS=0; tmux_agent_exit_sweep ) \
+    || fail "watch-disabled tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "interrupt seconds of 0 should disable the quiet path too"
+tmux_running_stop || fail "running-stop after the disabled-quiet case should succeed"
+pass "quiet interrupt path honours a 0 threshold"
 
 # --- the next prompt re-arms the indicator after a silent teardown ---
 # The teardown must leave the window in a clean pre-turn state: nothing about
