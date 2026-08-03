@@ -440,6 +440,7 @@ tmux_badge_set_unless_running() {
 # Clear badge state while the caller holds the window transition lock.
 tmux_badge_clear_locked() {
     local window_id="$1"
+    local preserve_monitor="${2:-}"
     local orig_name autorename badged_name current
     orig_name=$(tmux show-options -wqv -t "$window_id" @code_notify_orig_name 2>/dev/null)
     [[ -n "$orig_name" ]] || return 0
@@ -460,7 +461,13 @@ tmux_badge_clear_locked() {
     tmux set-option -wu -t "$window_id" @code_notify_autorename 2>/dev/null
     tmux set-option -wu -t "$window_id" @code_notify_badged_name 2>/dev/null
     tmux set-option -wu -t "$window_id" @code_notify_clear_mode 2>/dev/null
-    tmux_agent_exit_untrack "$window_id"
+    # Some state transitions clear the rendering while deliberately keeping a
+    # non-rendering watch alive. In that case the existing PID (when one was
+    # resolved by the hook process) still belongs to the watch and must not be
+    # discarded with the badge metadata.
+    if [[ "$preserve_monitor" != "preserve-monitor" ]]; then
+        tmux_agent_exit_untrack "$window_id"
+    fi
     # A cleared badge means the user acknowledged this window (glance-clear
     # visit, notification click, or the cleanup paths), so a pending
     # post-completion idle nudge is moot.
@@ -645,6 +652,19 @@ TMUX_RESUME_POLL_TTL="${CODE_NOTIFY_TMUX_RESUME_POLL_TTL:-900}"
 # empty value stick instead of reverting to the default.
 TMUX_DIALOG_MARKERS="${CODE_NOTIFY_TMUX_DIALOG_MARKERS-^[^A-Za-z]*(Do you want|Would you like|Allow .*\?)|needs approval for}"
 TMUX_DIALOG_OPTIONS="${CODE_NOTIFY_TMUX_DIALOG_OPTIONS-^[^0-9A-Za-z]*[0-9]+\.[[:space:]]+(Yes|No)([[:space:],.]|$)|ctrl\+k[[:space:]]+approve}"
+# Antigravity emits no lifecycle hook when a user rejects a tool permission.
+# Its TUI does leave this explicit terminal line, however, so the resume poll
+# can distinguish rejection from approval: approval restores the running
+# indicator, while rejection clears the waiting badge and retires the pause.
+# Anchor past box-drawing/bullet chrome so ordinary prose mentioning a decline
+# mid-line is not mistaken for the TUI status. An explicit empty override
+# disables the detection.
+TMUX_DIALOG_CANCEL_MARKERS="${CODE_NOTIFY_TMUX_DIALOG_CANCEL_MARKERS-^[^A-Za-z0-9]*User declined the tool call([[:space:].]|$)}"
+# Only Antigravity renders the rejection row above. Keeping this allowlist
+# separate from the dialog-watch agents lets decline detection stay enabled
+# when the synthetic dialog watch is disabled, without making every other
+# agent capture retained history on each resume-poll tick.
+TMUX_DIALOG_CANCEL_AGENTS="${CODE_NOTIFY_TMUX_DIALOG_CANCEL_AGENTS:-antigravity}"
 # Agents whose running marker additionally gets a settle watch
 # (pipe-separated names as passed by the hooks). Codex finishes /review
 # without emitting any turn-end hook, so its marker would otherwise stand
@@ -718,8 +738,12 @@ TMUX_DIALOG_NOTIFY_SECONDS="${CODE_NOTIFY_TMUX_DIALOG_NOTIFY_SECONDS:-5}"
 #
 # Stillness, not position, is what keeps the scrollback from lying. The
 # interrupt line stays rendered after the user submits the next prompt, but a
-# working agent repaints its elapsed counter every second, so the fingerprint
-# never holds still and the watch cannot fire on a live turn. A turn that ends
+# working agent normally repaints its elapsed counter every second, so the
+# fingerprint does not hold still. Normally, but not always — a working line has
+# been observed frozen mid-turn (see TMUX_INTERRUPT_QUIET_SECONDS), and a still
+# pane is then indistinguishable from an ended one. Stillness is therefore a
+# necessary condition and not a sufficient one: TMUX_BUSY_MARKERS vetoes this
+# path outright when the capture shows a turn in flight. A turn that ends
 # normally has its marker taken down by the real Stop hook, leaving nothing for
 # this watch to act on, and a turn paused for approval drops the marker too.
 # Codex is listed even though its settle watch (TMUX_SETTLE_AGENTS) already
@@ -735,9 +759,14 @@ TMUX_INTERRUPT_WATCH_AGENTS="${CODE_NOTIFY_TMUX_INTERRUPT_WATCH_AGENTS:-claude|c
 # name. Codex instead renders "■ Conversation interrupted - tell the model
 # what to do differently." — a different wording, hence the alternation.
 # Anchored past the leading box-drawing decoration like TMUX_DIALOG_MARKERS, so
-# prose mentioning an interruption mid-line does not match. The `-` (not `:-`)
-# expansion makes an explicit empty value stick, which disables the watch.
-TMUX_INTERRUPT_MARKERS="${CODE_NOTIFY_TMUX_INTERRUPT_MARKERS-^[^A-Za-z]*(Interrupted|Conversation interrupted)([[:space:]]|$)}"
+# prose mentioning an interruption mid-line does not match. Digits are excluded
+# from that leading run even though no real interrupt line starts with one: the
+# agent's own tool output renders line-numbered file content ("1779      "  ⎿
+# Interrupted · …"; do" from a Read, an edit hunk or grep -n), and a leading run
+# that allowed digits made every such row read as a cancelled turn. That
+# false positive is the dangerous direction — see the veto below. The `-` (not
+# `:-`) expansion makes an explicit empty value stick, which disables the watch.
+TMUX_INTERRUPT_MARKERS="${CODE_NOTIFY_TMUX_INTERRUPT_MARKERS-^[^A-Za-z0-9]*(Interrupted|Conversation interrupted)([[:space:]]|$)}"
 # Seconds the interrupt line must stay on a still pane before the marker is
 # retired. The check rides the agent-exit poll, so the effective latency is the
 # first tick past this age. 0 disables the watch.
@@ -1022,6 +1051,7 @@ tmux_running_dialog_arm() {
     local pane_re='^%[0-9]+$'
     # A fresh turn never inherits the previous turn's sighting epoch.
     tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_grace 2>/dev/null
     if [[ -z "$agent" ]] || [[ "|$TMUX_DIALOG_WATCH_AGENTS|" != *"|$agent|"* ]] ||
         [[ ! "${TMUX_DIALOG_NOTIFY_SECONDS:-0}" =~ ^[0-9]+$ ]] ||
         (( TMUX_DIALOG_NOTIFY_SECONDS <= 0 )) ||
@@ -1042,6 +1072,7 @@ tmux_running_dialog_disarm() {
     local window_id="$1"
     tmux set-option -wu -t "$window_id" @code_notify_dialog_ctx 2>/dev/null
     tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_grace 2>/dev/null
 }
 
 # Arm the interrupt watch on a window whose agent (per
@@ -1235,12 +1266,23 @@ tmux_idle_watch_disarm() {
 # the scheduler saw a window with no live run — the post-completion idle nudge,
 # whose only requirement is that no turn has claimed the window since. Absent
 # GUARD_WINDOW there is no guard: an ordinary hook-driven run always proceeds.
+# GUARD_DIALOG_GRACE additionally pins a post-rejection queued-dialog watch to
+# the exact grace generation the sweep observed.
 tmux_synthetic_guard_ok() {
     local window_id="${CODE_NOTIFY_TMUX_GUARD_WINDOW:-}"
     [[ -n "$window_id" ]] || return 0
     { [[ -n "${TMUX:-}" ]] && command -v tmux &> /dev/null; } || return 0
     [[ "$window_id" =~ ^@[0-9]+$ ]] || return 0
     local want_run="${CODE_NOTIFY_TMUX_GUARD_RUN:-}" run gen now
+    local want_dialog_grace="${CODE_NOTIFY_TMUX_GUARD_DIALOG_GRACE:-}" dialog_grace grace_expiry
+    if [[ -n "$want_dialog_grace" ]]; then
+        dialog_grace=$(tmux show-options -wqv -t "$window_id" \
+            @code_notify_dialog_grace 2>/dev/null)
+        [[ "$dialog_grace" == "$want_dialog_grace" ]] || return 1
+        grace_expiry="${dialog_grace%%,*}"
+        now=$(date +%s)
+        [[ "$grace_expiry" =~ ^[0-9]+$ ]] && (( now < grace_expiry )) || return 1
+    fi
     run=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
     if [[ -z "$want_run" ]]; then
         now=$(date +%s)
@@ -1305,19 +1347,22 @@ tmux_idle_watch_notify() {
 # TMUX_PANE targets the watched pane; detached delivery keeps a persistent
 # alert from blocking the sweep tick. CODE_NOTIFY_NOTIFIER_PATH exists for
 # tests to substitute a stub.
-# $4-$6 (window, running epoch, run generation) arm the overtake guard in the
-# detached child: answering the dialog resumes the turn through the poll, and
-# that resumed run must not be torn down by an alert for the dialog it just
-# retired.
+# $4-$7 (window, running epoch, run generation, optional post-cancel dialog
+# grace token) arm the overtake guard in the detached child: answering the
+# dialog resumes the turn through the poll, and that resumed run must not be
+# torn down by an alert for the dialog it just retired. The grace token covers
+# a queued Antigravity ask that appears after the preceding ask was rejected,
+# when there is deliberately no running epoch to validate.
 tmux_dialog_watch_notify() {
     local pane_id="$1" agent="$2" project="$3" notifier
-    local window_id="${4:-}" run="${5:-}" gen="${6:-}"
+    local window_id="${4:-}" run="${5:-}" gen="${6:-}" dialog_grace="${7:-}"
     tmux_permission_prompt_enabled || return 0
     notifier="${CODE_NOTIFY_NOTIFIER_PATH:-${TMUX_BADGE_LIB_PATH%/*}/../core/notifier.sh}"
     [[ -f "$notifier" ]] || return 0
     ( printf '%s' '{"type":"permission_prompt"}' \
         | TMUX_PANE="$pane_id" CODE_NOTIFY_TMUX_GUARD_WINDOW="$window_id" \
           CODE_NOTIFY_TMUX_GUARD_RUN="$run" CODE_NOTIFY_TMUX_GUARD_GEN="$gen" \
+          CODE_NOTIFY_TMUX_GUARD_DIALOG_GRACE="$dialog_grace" \
           bash "$notifier" notification "$agent" "$project" ) >/dev/null 2>&1 &
     disown 2>/dev/null || true
     return 0
@@ -1426,6 +1471,7 @@ tmux_agent_exit_schedule_sweep() {
     q_poll=$(tmux_focus_shell_quote "$TMUX_AGENT_EXIT_POLL_SECONDS")
     local q_settle q_idle q_idle_agents q_notifier
     local q_dialog_secs q_dialog_agents q_dialog_markers q_dialog_options
+    local q_cancel_markers q_cancel_agents
     q_settle=$(tmux_focus_shell_quote "$TMUX_SETTLE_SECONDS")
     q_idle=$(tmux_focus_shell_quote "$TMUX_IDLE_SECONDS")
     q_idle_agents=$(tmux_focus_shell_quote "$TMUX_IDLE_AGENTS")
@@ -1437,6 +1483,8 @@ tmux_agent_exit_schedule_sweep() {
     q_dialog_agents=$(tmux_focus_shell_quote "$TMUX_DIALOG_WATCH_AGENTS")
     q_dialog_markers=$(tmux_focus_shell_quote "$TMUX_DIALOG_MARKERS")
     q_dialog_options=$(tmux_focus_shell_quote "$TMUX_DIALOG_OPTIONS")
+    q_cancel_markers=$(tmux_focus_shell_quote "$TMUX_DIALOG_CANCEL_MARKERS")
+    q_cancel_agents=$(tmux_focus_shell_quote "$TMUX_DIALOG_CANCEL_AGENTS")
     # Same for the interrupt watch: the fired sweep matches the marker and
     # measures the stillness window itself.
     local q_int_secs q_int_agents q_int_markers q_int_quiet q_busy_markers
@@ -1456,6 +1504,8 @@ tmux_agent_exit_schedule_sweep() {
     inner+="CODE_NOTIFY_TMUX_DIALOG_WATCH_AGENTS=$q_dialog_agents "
     inner+="CODE_NOTIFY_TMUX_DIALOG_MARKERS=$q_dialog_markers "
     inner+="CODE_NOTIFY_TMUX_DIALOG_OPTIONS=$q_dialog_options "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_CANCEL_MARKERS=$q_cancel_markers "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_CANCEL_AGENTS=$q_cancel_agents "
     inner+="CODE_NOTIFY_TMUX_INTERRUPT_SECONDS=$q_int_secs "
     inner+="CODE_NOTIFY_TMUX_INTERRUPT_WATCH_AGENTS=$q_int_agents "
     inner+="CODE_NOTIFY_TMUX_INTERRUPT_MARKERS=$q_int_markers "
@@ -1479,12 +1529,14 @@ tmux_agent_exit_sweep() {
     local fp_now fp_prev settle_since settle_ctx settle_badge_only mode transition_lock transition_token
     local current_pid current_since current_settle_since current_badge_only current_gen
     local ipane isince ifp1 ifp2 istate iagent iproject
-    local dialog_ctx dialog_since dpane dagent dproject dialog_content
-    local interrupt_pane interrupt_fp interrupt_since interrupt_content interrupt_needed
+    local dialog_ctx dialog_since dialog_grace dialog_active dialog_run dialog_gen
+    local dialog_guard_grace dialog_expiry current_dialog_grace
+    local dpane dagent dproject dialog_content
+    local interrupt_pane interrupt_fp interrupt_since interrupt_content interrupt_needed interrupt_seen
     now=$(date +%s)
     # orig (the badge marker) reads last: it is the only field that may embed
     # "|" (a window name), and read folds any remainder into the final var.
-    while IFS='|' read -r window_id pid since gen settle_pane idle_watch resume dialog_ctx dialog_since interrupt_pane interrupt_fp interrupt_since settle_badge_only orig; do
+    while IFS='|' read -r window_id pid since gen settle_pane idle_watch resume dialog_ctx dialog_since dialog_grace interrupt_pane interrupt_fp interrupt_since settle_badge_only orig; do
         [[ "$window_id" =~ ^@[0-9]+$ ]] || continue
         # list-windows emits every window, with empty fields when the options
         # are unset. Windows that are neither PID-tracked nor settle-watched
@@ -1493,7 +1545,7 @@ tmux_agent_exit_sweep() {
         # live by the normal glance/engage/TTL rules, not by this monitor.
         if [[ "$pid" =~ ^[0-9]+$ ]]; then
             if kill -0 "$pid" 2>/dev/null; then
-                if [[ -n "$since$settle_pane$idle_watch$resume$orig" ]]; then
+                if [[ -n "$since$settle_pane$idle_watch$resume$dialog_grace$orig" ]]; then
                     live=1
                 else
                     # A live agent but nothing the monitor serves — no badge,
@@ -1582,18 +1634,39 @@ tmux_agent_exit_sweep() {
         # pause — yet an approval dialog sitting rendered on the recorded
         # pane means the agent is in fact blocked on the user (a pause the
         # PreToolUse banner could not predict: file-write and subagent
-        # approvals appear in no permission list). Record when the dialog
+        # approvals appear in no permission list). A rejected Antigravity ask
+        # additionally leaves a bounded grace token: parallel queued asks do
+        # not call tmux_running_start, so that token keeps this non-rendering
+        # watch alive without falsely restoring the running indicator. Record
+        # when the dialog
         # was first seen; once it has stayed on screen across ticks spanning
         # TMUX_DIALOG_NOTIFY_SECONDS, deliver one synthetic
         # permission_prompt through the notifier. Its input pause then
-        # removes the running marker, which both gates this branch off (no
-        # re-fire while the same dialog waits) and hands resume detection to
-        # the poll that pause arms. The dialog vanishing before the
+        # removes the running marker or post-cancel grace, which gates this
+        # branch off (no re-fire while the same dialog waits) and hands resume
+        # detection to the poll that pause arms. The dialog vanishing before the
         # threshold means the user was already there — reset silently. Same
         # observability guards as the settle watch: the recorded pane must
         # still belong to this window and must actually capture.
-        if [[ -n "$dialog_ctx" ]] && [[ "$since" =~ ^[0-9]+$ ]] &&
-            (( now - since < TMUX_RUNNING_TTL )) &&
+        dialog_active=0
+        dialog_run=""
+        dialog_gen=""
+        dialog_guard_grace=""
+        if [[ "$since" =~ ^[0-9]+$ ]] && (( now - since < TMUX_RUNNING_TTL )); then
+            dialog_active=1
+            dialog_run="$since"
+            dialog_gen="$gen"
+        elif [[ "$dialog_grace" == *,* ]]; then
+            dialog_expiry="${dialog_grace%%,*}"
+            if [[ "$dialog_expiry" =~ ^[0-9]+$ ]] && (( now < dialog_expiry )); then
+                dialog_active=1
+                dialog_guard_grace="$dialog_grace"
+            else
+                tmux set-option -wu -t "$window_id" @code_notify_dialog_grace 2>/dev/null
+                tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
+            fi
+        fi
+        if [[ -n "$dialog_ctx" ]] && (( dialog_active )) &&
             [[ "${TMUX_DIALOG_NOTIFY_SECONDS:-0}" =~ ^[0-9]+$ ]] &&
             (( TMUX_DIALOG_NOTIFY_SECONDS > 0 )); then
             read -r dpane dagent dproject <<< "$dialog_ctx"
@@ -1620,9 +1693,19 @@ tmux_agent_exit_sweep() {
                             # under, so it is what travels into the child.
                             current_since=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
                             current_gen=$(tmux show-options -wqv -t "$window_id" @code_notify_run_gen 2>/dev/null)
-                            if [[ "$current_since" == "$since" ]] && [[ "$current_gen" == "$gen" ]]; then
+                            current_dialog_grace=$(tmux show-options -wqv -t "$window_id" \
+                                @code_notify_dialog_grace 2>/dev/null)
+                            if [[ -n "$dialog_guard_grace" ]] &&
+                                [[ "$current_dialog_grace" == "$dialog_guard_grace" ]] &&
+                                { [[ ! "$current_since" =~ ^[0-9]+$ ]] ||
+                                  (( now - current_since >= TMUX_RUNNING_TTL )); }; then
                                 tmux_dialog_watch_notify "$dpane" "$dagent" "$dproject" \
-                                    "$window_id" "$since" "$gen"
+                                    "$window_id" "" "" "$dialog_guard_grace"
+                            elif [[ -z "$dialog_guard_grace" ]] &&
+                                [[ "$current_since" == "$dialog_run" ]] &&
+                                [[ "$current_gen" == "$dialog_gen" ]]; then
+                                tmux_dialog_watch_notify "$dpane" "$dagent" "$dproject" \
+                                    "$window_id" "$dialog_run" "$dialog_gen"
                             fi
                         fi
                     elif [[ -n "$dialog_since" ]]; then
@@ -1665,22 +1748,75 @@ tmux_agent_exit_sweep() {
                 # ended, so it earns the short threshold. A pane with no such
                 # line still earns the long one (see
                 # TMUX_INTERRUPT_QUIET_SECONDS — several cancel paths leave no
-                # text at all), but only once the capture also rules out a turn
-                # still in flight: a working line, frozen or animating
-                # (TMUX_BUSY_MARKERS), or an approval dialog, which is a pause
-                # the notification hooks own. A capture that qualifies under
-                # neither threshold falls through to the baseline reset below.
-                # Switching thresholds mid-countdown needs no special handling:
-                # whatever made a line appear or vanish also moved the
-                # fingerprint, so the next tick re-baselines anyway.
+                # text at all), but only once the capture rules out an approval
+                # dialog, which is a pause the notification hooks own. A capture
+                # that qualifies under neither threshold falls through to the
+                # baseline reset below. Switching thresholds mid-countdown needs
+                # no special handling: whatever made a line appear or vanish
+                # also moved the fingerprint, so the next tick re-baselines
+                # anyway.
+                #
+                # A working line, frozen or animating (TMUX_BUSY_MARKERS), vetoes
+                # BOTH thresholds, not just the quiet one. A pane demonstrably
+                # showing work in flight is not a pane whose turn ended, whatever
+                # text it also carries — and it can carry a great deal, since the
+                # match spans the whole visible pane and the agent's own tool
+                # output quotes interrupt lines out of source files.
+                #
+                # The cost is that a genuine Escape on a pane still displaying a
+                # busy-looking row does not retire the marker at
+                # TMUX_INTERRUPT_SECONDS; it waits for the next prompt. That is
+                # the pre-watch behaviour — bounded by the turn and
+                # self-correcting the moment the user types. The inverse error is
+                # not: a false teardown blanks a live turn's indicator silently,
+                # and nothing re-lights it mid-turn, so the spinner stays dark for
+                # an unbounded stretch while the agent works. Same asymmetry
+                # TMUX_BUSY_MARKERS is argued from; it governs the marker-text
+                # path too, whose false-positive direction is the dangerous one.
                 interrupt_needed=0
-                if (( TMUX_INTERRUPT_SECONDS > 0 )) &&
-                    [[ "$(tmux_interrupt_flag "$interrupt_content")" == "1" ]]; then
-                    interrupt_needed="$TMUX_INTERRUPT_SECONDS"
-                elif (( TMUX_INTERRUPT_QUIET_SECONDS > 0 )) &&
-                    [[ "$(tmux_busy_flag "$interrupt_content")" != "1" ]] &&
-                    [[ "$(tmux_resume_poll_dialog_flag "$interrupt_content")" != "1" ]]; then
-                    interrupt_needed="$TMUX_INTERRUPT_QUIET_SECONDS"
+                interrupt_seen=$(tmux_interrupt_flag "$interrupt_content")
+                if [[ "$(tmux_busy_flag "$interrupt_content")" != "1" ]]; then
+                    if [[ "$interrupt_seen" == "1" ]]; then
+                        interrupt_needed="$TMUX_INTERRUPT_SECONDS"
+                    elif (( TMUX_INTERRUPT_QUIET_SECONDS > 0 )) &&
+                        [[ "$(tmux_resume_poll_dialog_flag "$interrupt_content")" != "1" ]]; then
+                        interrupt_needed="$TMUX_INTERRUPT_QUIET_SECONDS"
+                    fi
+                elif [[ "$interrupt_seen" == "1" ]]; then
+                    # Vetoed, but the interrupt line is up — so this turn is
+                    # over as far as any watch can tell, and the settle watch
+                    # below must not be the one to act on it. Settle has no
+                    # busy veto of its own and fires on stillness alone, so
+                    # falling through to it would reach the user as the
+                    # synthetic "Codex is done" completion plus an idle nudge:
+                    # precisely what this watch pre-empts settle to suppress
+                    # (see TMUX_INTERRUPT_WATCH_AGENTS). Before the veto the
+                    # teardown's `continue` kept settle from ever seeing an
+                    # interrupted pane; hold its countdown at zero instead.
+                    #
+                    # Deliberately narrow: only a pane actually showing an
+                    # interrupt line. A blanket busy veto on settle would be the
+                    # wrong trade — TMUX_BUSY_MARKERS matches ordinary bullet
+                    # rows, and a Codex /review whose output happens to contain
+                    # one would lose its completion notification altogether,
+                    # which is the very hook-less case settle exists to cover.
+                    #
+                    # Known gap, accepted: this keys on the capture, not the
+                    # turn. If the interrupt row later reflows out of the
+                    # visible pane while a busy-matching row survives it, the
+                    # refresh stops and settle eventually synthesizes after all.
+                    # Latching "this turn was interrupted" until the next prompt
+                    # would close it, but at a worse price: TMUX_INTERRUPT_MARKERS
+                    # also matches a cancelled TOOL call, after which the turn
+                    # carries on, so one false or mid-turn match would silently
+                    # cost that turn its completion. A spurious toast is bounded,
+                    # visible and self-correcting; a swallowed completion leaves
+                    # the marker up to the 4h TTL with nothing to tell the user.
+                    # Same asymmetry the rest of this watch is built on — so the
+                    # gap stays until an interrupt signal narrower than the
+                    # marker text (a turn-level one) is available to latch.
+                    tmux set-option -w -t "$window_id" \
+                        @code_notify_settle_since "$now" 2>/dev/null
                 fi
                 if (( interrupt_needed > 0 )); then
                     # Snapshot values, not fresh reads: only the arm and this
@@ -1812,7 +1948,7 @@ tmux_agent_exit_sweep() {
             tmux set-option -w -t "$window_id" @code_notify_agent_pid "$pid" 2>/dev/null
         fi
     done < <(tmux list-windows -a -F \
-        '#{window_id}|#{@code_notify_agent_pid}|#{@code_notify_running}|#{@code_notify_run_gen}|#{@code_notify_settle_pane}|#{@code_notify_idle_watch}|#{@code_notify_resume_pending}|#{@code_notify_dialog_ctx}|#{@code_notify_dialog_since}|#{@code_notify_interrupt_pane}|#{@code_notify_interrupt_fp}|#{@code_notify_interrupt_since}|#{@code_notify_settle_badge_only}|#{@code_notify_orig_name}' 2>/dev/null)
+        '#{window_id}|#{@code_notify_agent_pid}|#{@code_notify_running}|#{@code_notify_run_gen}|#{@code_notify_settle_pane}|#{@code_notify_idle_watch}|#{@code_notify_resume_pending}|#{@code_notify_dialog_ctx}|#{@code_notify_dialog_since}|#{@code_notify_dialog_grace}|#{@code_notify_interrupt_pane}|#{@code_notify_interrupt_fp}|#{@code_notify_interrupt_since}|#{@code_notify_settle_badge_only}|#{@code_notify_orig_name}' 2>/dev/null)
     if [[ "$live" -eq 1 ]]; then
         tmux_agent_exit_schedule_sweep
     fi
@@ -2527,6 +2663,7 @@ tmux_running_stop() {
     tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
     tmux_running_settle_disarm "$window_id"
     tmux_idle_watch_disarm "$window_id"
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_grace 2>/dev/null
     local since mode
     since=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
     if [[ -n "$since" ]]; then
@@ -2620,6 +2757,26 @@ tmux_running_pause_for_input() {
     local window_re='^@[0-9]+$'
     [[ "$window_id" =~ $window_re ]] || return 0
 
+    # Rejection rows are an Antigravity-only signal. Capture their retained-
+    # history baseline before taking the window transition lock so even a
+    # very large history cannot hold up concurrent hooks for this window.
+    # Other agents skip the history capture entirely. The agent rides in the
+    # packed pause snapshot because the timer process cannot reconstruct it.
+    local pane_re='^%[0-9]+$' schedule_poll=0 watch_enabled=0
+    local pause_agent="${CODE_NOTIFY_TMUX_AGENT_NAME:-}" cancel_baseline="-"
+    [[ "$pause_agent" =~ ^[A-Za-z0-9_-]+$ ]] || pause_agent=""
+    if [[ "$watch" == "watch" ]] && [[ "$pane_id" =~ $pane_re ]] && tmux_running_enabled; then
+        watch_enabled=1
+        if tmux_resume_poll_cancel_enabled "$pause_agent"; then
+            if tmux_resume_poll_cancel_history_count "$pane_id"; then
+                cancel_baseline="${TMUX_RESUME_POLL_CANCEL_COUNT:-0}"
+                [[ "$cancel_baseline" =~ ^[0-9]+$ ]] || cancel_baseline="-"
+            fi
+        else
+            cancel_baseline=0
+        fi
+    fi
+
     # Re-acquire: the stop above releases the lock before returning, so a
     # queued prompt (or a poll resume) can claim the window in the gap. Writing
     # the pause state unlocked would resurrect a wait that successor turn just
@@ -2638,6 +2795,11 @@ tmux_running_pause_for_input() {
         tmux_running_transition_lock_release "$transition_lock" "$transition_token"
         return 0
     fi
+    # A real notification for a known queued ask supersedes the synthetic
+    # post-rejection dialog watch. Retire its grace before arming this pause so
+    # the sweep cannot deliver a duplicate permission_prompt for the dialog
+    # this hook already announced.
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_grace 2>/dev/null
     tmux set-option -w -t "$window_id" @code_notify_resume_pending "$now" 2>/dev/null
     tmux_resume_flag_set "$window_id"
     # The answer itself emits no hook (see TMUX_RESUME_POLL_SECONDS), so watch
@@ -2649,16 +2811,26 @@ tmux_running_pause_for_input() {
     # single content change can just be the dialog rendering late (this hook
     # fires before the dialog UI). The snapshot option doubles as the watch
     # flag: pauses without it (idle reminders) are never resumed by the poll.
-    local pane_re='^%[0-9]+$' schedule_poll=0
-    if [[ "$watch" == "watch" ]] && [[ "$pane_id" =~ $pane_re ]] && tmux_running_enabled; then
+    if (( watch_enabled )); then
         # Do not snapshot synchronously inside the notification hook. While
         # this command is running, Claude/Codex renders the hook's transient
         # status message alongside the still-unanswered dialog; its removal
         # would otherwise look like an answer at the first poll and replace
-        # the waiting badge with the running indicator. Store only the pane
-        # now; the first poll records a baseline after the hook UI has settled.
+        # the waiting badge with the running indicator. The decline-marker
+        # COUNT is safe to capture before the lock: the hook status cannot
+        # create that exact TUI line, and recording the count makes a later
+        # rejection a transition instead of mistaking an older declined card
+        # for this request's answer. The first poll still records the content
+        # checksum only after the hook UI has settled. "-" means the
+        # synchronous capture failed and the first successful poll must
+        # establish the baseline without cancelling.
+        local pause_gen
+        # Seconds are not a request identity: parallel asks can pause the same
+        # pane more than once inside one epoch. Pack a unique generation into
+        # the snapshot so a late rejection poll cannot consume its successor.
+        pause_gen="$$.$now.${RANDOM:-0}.${RANDOM:-0}"
         tmux set-option -w -t "$window_id" @code_notify_pause_fp \
-            "$pane_id" 2>/dev/null
+            "$pane_id,$cancel_baseline,$pause_gen,$pause_agent" 2>/dev/null
         schedule_poll=1
     else
         # No watch: drop any earlier snapshot instead of letting an alive poll
@@ -2724,6 +2896,7 @@ tmux_running_resume_window() {
     # not carry into the resumed turn — a later dialog would fire without
     # its confirmation tick.
     tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_grace 2>/dev/null
     # Same for the interrupt watch's stillness baseline (see
     # TMUX_INTERRUPT_WATCH_AGENTS). This path relights the marker directly
     # rather than through tmux_running_start, so nothing else re-arms it, and
@@ -2739,6 +2912,76 @@ tmux_running_resume_window() {
     fi
     tmux_running_transition_lock_release "$transition_lock" "$transition_token"
     tmux_running_schedule_sweep $((TMUX_RUNNING_TTL + 2))
+    return 0
+}
+
+# Retire a watched input pause after the pane explicitly reports that the user
+# rejected it. Unlike tmux_running_resume_window this is a terminal/cancelled
+# transition: do not light the running indicator; clear the waiting badge and
+# request-local watch state while retaining the per-turn watch contexts needed
+# by queued asks. Re-check the snapshotted pause epoch and packed fingerprint
+# under the window transition lock so a late poll cannot clear a successor
+# request or turn that claimed the same window in the meantime.
+tmux_running_cancel_input_window() {
+    local window_id="$1" expected_pending="$2" expected_pause_fp="$3"
+    [[ "$window_id" =~ ^@[0-9]+$ ]] || return 1
+    [[ -n "$expected_pending" ]] || return 1
+    [[ -n "$expected_pause_fp" ]] || return 1
+
+    local transition_lock transition_token current_pending current_pause_fp since mode
+    local dialog_ctx dialog_grace="" preserve_monitor="" grace_ttl
+    tmux_running_transition_lock_acquire "$window_id" || return 1
+    transition_lock="$TMUX_RUNNING_TRANSITION_LOCKDIR"
+    transition_token="$TMUX_RUNNING_TRANSITION_LOCKTOKEN"
+    current_pending=$(tmux show-options -wqv -t "$window_id" @code_notify_resume_pending 2>/dev/null)
+    current_pause_fp=$(tmux show-options -wqv -t "$window_id" @code_notify_pause_fp 2>/dev/null)
+    since=$(tmux show-options -wqv -t "$window_id" @code_notify_running 2>/dev/null)
+    if [[ "$current_pending" != "$expected_pending" ]] ||
+        [[ "$current_pause_fp" != "$expected_pause_fp" ]] || [[ -n "$since" ]]; then
+        tmux_running_transition_lock_release "$transition_lock" "$transition_token"
+        return 1
+    fi
+
+    tmux set-option -wu -t "$window_id" @code_notify_resume_pending 2>/dev/null
+    tmux_resume_flag_clear "$window_id"
+    tmux set-option -wu -t "$window_id" @code_notify_pause_fp 2>/dev/null
+    tmux_running_settle_disarm "$window_id"
+    tmux_idle_watch_disarm "$window_id"
+    # Keep the per-turn dialog and interrupt watch contexts. Antigravity can
+    # queue several approval requests without another tmux_running_start, so
+    # disarming either here would blind the rest of the batch. Only reset the
+    # sighting/stillness epochs owned by this rejected request. The caller-side
+    # Antigravity running cache itself must go so the next real turn can arm.
+    tmux set-option -wu -t "$window_id" @code_notify_dialog_since 2>/dev/null
+    dialog_ctx=$(tmux show-options -wqv -t "$window_id" @code_notify_dialog_ctx 2>/dev/null)
+    if [[ -n "$dialog_ctx" ]]; then
+        tmux_timer_chain_token
+        grace_ttl="$TMUX_RESUME_POLL_TTL"
+        [[ "$grace_ttl" =~ ^[0-9]+$ ]] || grace_ttl=900
+        dialog_grace="$(( $(date +%s) + grace_ttl )),$TMUX_TIMER_CHAIN_TOKEN"
+        tmux set-option -w -t "$window_id" @code_notify_dialog_grace \
+            "$dialog_grace" 2>/dev/null
+        preserve_monitor="preserve-monitor"
+    else
+        tmux set-option -wu -t "$window_id" @code_notify_dialog_grace 2>/dev/null
+    fi
+    # Keep @code_notify_interrupt_markerfile as part of the per-turn context;
+    # only unlink its caller-side cache. A later arm rewrites or unsets the
+    # option, and repeat clears are deliberately idempotent on the absent file.
+    tmux_running_interrupt_markerfile_clear "$window_id"
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_fp 2>/dev/null
+    tmux set-option -wu -t "$window_id" @code_notify_interrupt_since 2>/dev/null
+    # The rejected request owns an engage-clear permission badge. Do not wipe
+    # an unrelated legacy/glance badge that happens to share the window.
+    mode=$(tmux show-options -wqv -t "$window_id" @code_notify_clear_mode 2>/dev/null)
+    if [[ "$mode" == "engage" ]]; then
+        tmux_badge_clear_locked "$window_id" "$preserve_monitor"
+    fi
+    tmux_running_transition_lock_release "$transition_lock" "$transition_token"
+    if [[ -n "$dialog_grace" ]]; then
+        tmux_agent_exit_schedule_sweep
+    fi
+    tmux_spinner_disarm_if_idle
     return 0
 }
 
@@ -2763,6 +3006,9 @@ tmux_resume_poll_schedule() {
     [[ -n "$TMUX_BADGE_LIB_PATH" ]] && [[ -f "$TMUX_BADGE_LIB_PATH" ]] || return 0
     local pending tmux_bin socket_path token q_lib q_tmux q_socket q_env q_poll q_ttl q_token inner
     local q_running q_spinner q_badge q_icon q_rttl
+    local q_agent_poll q_settle q_idle q_idle_agents q_notifier
+    local q_dialog_secs q_dialog_agents q_cancel_agents
+    local q_int_secs q_int_agents q_int_markers q_int_quiet q_busy_markers
     pending=$(tmux show-options -gqv @code_notify_resume_poll_scheduled 2>/dev/null)
     [[ -z "$pending" ]] || return 0
     tmux_bin=$(command -v tmux) || return 0
@@ -2786,9 +3032,23 @@ tmux_resume_poll_schedule() {
     q_badge=$(tmux_focus_shell_quote "${CODE_NOTIFY_TMUX_BADGE:-}")
     q_icon=$(tmux_focus_shell_quote "$TMUX_RUNNING_ICON")
     q_rttl=$(tmux_focus_shell_quote "$TMUX_RUNNING_TTL")
-    local q_markers q_options
+    q_agent_poll=$(tmux_focus_shell_quote "$TMUX_AGENT_EXIT_POLL_SECONDS")
+    q_settle=$(tmux_focus_shell_quote "$TMUX_SETTLE_SECONDS")
+    q_idle=$(tmux_focus_shell_quote "$TMUX_IDLE_SECONDS")
+    q_idle_agents=$(tmux_focus_shell_quote "$TMUX_IDLE_AGENTS")
+    q_notifier=$(tmux_focus_shell_quote "${CODE_NOTIFY_NOTIFIER_PATH:-}")
+    q_dialog_secs=$(tmux_focus_shell_quote "$TMUX_DIALOG_NOTIFY_SECONDS")
+    q_dialog_agents=$(tmux_focus_shell_quote "$TMUX_DIALOG_WATCH_AGENTS")
+    q_int_secs=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_SECONDS")
+    q_int_agents=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_WATCH_AGENTS")
+    q_int_markers=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_MARKERS")
+    q_int_quiet=$(tmux_focus_shell_quote "$TMUX_INTERRUPT_QUIET_SECONDS")
+    q_busy_markers=$(tmux_focus_shell_quote "$TMUX_BUSY_MARKERS")
+    local q_markers q_options q_cancel_markers
     q_markers=$(tmux_focus_shell_quote "$TMUX_DIALOG_MARKERS")
     q_options=$(tmux_focus_shell_quote "$TMUX_DIALOG_OPTIONS")
+    q_cancel_markers=$(tmux_focus_shell_quote "$TMUX_DIALOG_CANCEL_MARKERS")
+    q_cancel_agents=$(tmux_focus_shell_quote "$TMUX_DIALOG_CANCEL_AGENTS")
     inner="cur=\$($q_tmux -S $q_socket show-options -gqv @code_notify_resume_poll_scheduled 2>/dev/null); "
     inner+="if [ \"\$cur\" != $q_token ]; then exit 0; fi; "
     inner+="$q_tmux -S $q_socket set-option -gu @code_notify_resume_poll_scheduled; "
@@ -2797,6 +3057,19 @@ tmux_resume_poll_schedule() {
     inner+="CODE_NOTIFY_TMUX_RUNNING=$q_running CODE_NOTIFY_TMUX_SPINNER=$q_spinner "
     inner+="CODE_NOTIFY_TMUX_BADGE=$q_badge CODE_NOTIFY_TMUX_RUNNING_ICON=$q_icon "
     inner+="CODE_NOTIFY_TMUX_RUNNING_TTL=$q_rttl CODE_NOTIFY_TMUX_DIALOG_OPTIONS=$q_options "
+    inner+="CODE_NOTIFY_TMUX_AGENT_EXIT_POLL_SECONDS=$q_agent_poll "
+    inner+="CODE_NOTIFY_TMUX_SETTLE_SECONDS=$q_settle "
+    inner+="CODE_NOTIFY_TMUX_IDLE_SECONDS=$q_idle CODE_NOTIFY_TMUX_IDLE_AGENTS=$q_idle_agents "
+    inner+="CODE_NOTIFY_NOTIFIER_PATH=$q_notifier "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_NOTIFY_SECONDS=$q_dialog_secs "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_WATCH_AGENTS=$q_dialog_agents "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_CANCEL_MARKERS=$q_cancel_markers "
+    inner+="CODE_NOTIFY_TMUX_DIALOG_CANCEL_AGENTS=$q_cancel_agents "
+    inner+="CODE_NOTIFY_TMUX_INTERRUPT_SECONDS=$q_int_secs "
+    inner+="CODE_NOTIFY_TMUX_INTERRUPT_WATCH_AGENTS=$q_int_agents "
+    inner+="CODE_NOTIFY_TMUX_INTERRUPT_MARKERS=$q_int_markers "
+    inner+="CODE_NOTIFY_TMUX_INTERRUPT_QUIET_SECONDS=$q_int_quiet "
+    inner+="CODE_NOTIFY_TMUX_BUSY_MARKERS=$q_busy_markers "
     inner+="CODE_NOTIFY_TMUX_DIALOG_MARKERS=$q_markers bash $q_lib resume-poll; fi"
     inner="${inner//\#/##}"
     # Claim before arming (see tmux_timer_chain_token); a failed arm rolls
@@ -2860,18 +3133,56 @@ tmux_resume_poll_fingerprint() {
 # re-derives the true state.
 tmux_resume_poll_sweep() {
     { [[ -n "${TMUX:-}" ]] && command -v tmux &> /dev/null; } || return 0
-    local now window_id pending activity fp pane fp_sum fp_size changed dialog
-    local fp_saved fp_now content marker_now waiting=0
+    local now window_id pending activity fp pane_field pane pane_meta pause_rest
+    local pause_gen pause_agent pane_state cancel_enabled baseline_learned
+    local cancel_baseline cancel_now fp_sum fp_size changed dialog fp_saved fp_now content
+    local marker_now pane_window waiting=0
     now=$(date +%s)
     while IFS='|' read -r window_id pending activity fp; do
         [[ "$window_id" =~ ^@[0-9]+$ ]] || continue
         [[ "$pending" =~ ^[0-9]+$ ]] || continue
-        # Only watch-mode pauses carry a pane id, followed (after the first
-        # poll) by a dialog snapshot — the two cksum fields, a changed flag
-        # (1 when the previous tick saw the content change) and a dialog flag
-        # (1 when it saw the dialog marker on screen). Idle-style pauses
-        # carry none of this and resume through their hooks, never the poll.
-        read -r pane fp_sum fp_size changed dialog <<< "$fp"
+        # Only watch-mode pauses carry a pane id plus the number of decline
+        # markers present when this request paused plus a unique pause
+        # generation and agent ("%3,2,1234.1700000000.1.2,antigravity").
+        # After the first poll that is followed by the two cksum fields, a
+        # changed flag (1 when the previous tick saw content change), and a
+        # dialog flag (1 when it saw the dialog on screen). Older pane-only,
+        # pane,count and pane,count,generation values remain readable; an
+        # unknown agent simply skips the Antigravity-only history scan.
+        # Pane-only snapshots also learn and persist a numeric baseline on the
+        # first successful capture. Idle-style pauses carry none of this.
+        read -r pane_field fp_sum fp_size changed dialog <<< "$fp"
+        pause_agent=""
+        if [[ "$pane_field" == *,* ]]; then
+            pane="${pane_field%%,*}"
+            pane_meta="${pane_field#*,}"
+            if [[ "$pane_meta" == *,* ]]; then
+                cancel_baseline="${pane_meta%%,*}"
+                pause_rest="${pane_meta#*,}"
+                if [[ "$pause_rest" == *,* ]]; then
+                    pause_gen="${pause_rest%%,*}"
+                    pause_agent="${pause_rest#*,}"
+                else
+                    pause_gen="$pause_rest"
+                fi
+            else
+                cancel_baseline="$pane_meta"
+                pause_gen=""
+            fi
+        else
+            pane="$pane_field"
+            cancel_baseline="-"
+            pause_gen=""
+        fi
+        pane_state="$pane,$cancel_baseline"
+        if [[ -n "$pause_gen$pause_agent" ]]; then
+            pane_state+=",$pause_gen"
+            [[ -n "$pause_agent" ]] && pane_state+=",$pause_agent"
+        fi
+        cancel_enabled=0
+        if tmux_resume_poll_cancel_enabled "$pause_agent"; then
+            cancel_enabled=1
+        fi
         fp_saved="$fp_sum $fp_size"
         [[ "$pane" =~ ^%[0-9]+$ ]] || continue
         (( now - pending < TMUX_RESUME_POLL_TTL )) || continue
@@ -2879,15 +3190,48 @@ tmux_resume_poll_sweep() {
         # the baseline until this first timer tick, after that status has gone
         # away, so hook completion cannot be mistaken for user input.
         if [[ -z "$fp_sum" ]]; then
-            if [[ "$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)" != "$window_id" ]]; then
+            pane_window=$(tmux display-message -p -t "$pane" \
+                '#{window_id}' 2>/dev/null)
+            if [[ "$pane_window" != "$window_id" ]]; then
                 waiting=1
                 continue
             fi
-            if content=$(tmux capture-pane -p -t "$pane" 2>/dev/null); then
+            if tmux_resume_poll_capture "$pane" "$cancel_enabled"; then
+                content="$TMUX_RESUME_POLL_CONTENT"
+                marker_now=$(tmux_resume_poll_dialog_flag "$content")
+                cancel_now="${TMUX_RESUME_POLL_CANCEL_COUNT:-0}"
+                [[ "$cancel_now" =~ ^[0-9]+$ ]] || cancel_now=0
+                if [[ "$cancel_baseline" =~ ^[0-9]+$ ]] &&
+                    (( cancel_now > cancel_baseline )) && [[ "$marker_now" != "1" ]]; then
+                    if ! tmux_running_cancel_input_window "$window_id" "$pending" "$fp"; then
+                        waiting=1
+                    fi
+                    continue
+                fi
+                if [[ ! "$cancel_baseline" =~ ^[0-9]+$ ]]; then
+                    cancel_baseline="$cancel_now"
+                    pane_state="$pane,$cancel_baseline"
+                    if [[ -n "$pause_gen$pause_agent" ]]; then
+                        pane_state+=",$pause_gen"
+                        [[ -n "$pause_agent" ]] && pane_state+=",$pause_agent"
+                    fi
+                elif [[ "$marker_now" == "1" ]] &&
+                    (( cancel_now > cancel_baseline )); then
+                    # This request is visibly unanswered, so every rejection
+                    # already in retained history belongs to an earlier queued
+                    # ask. Absorb it now or approving this dialog would later
+                    # misattribute that sibling's rejection to this request.
+                    cancel_baseline="$cancel_now"
+                    pane_state="$pane,$cancel_baseline"
+                    if [[ -n "$pause_gen$pause_agent" ]]; then
+                        pane_state+=",$pause_gen"
+                        [[ -n "$pause_agent" ]] && pane_state+=",$pause_agent"
+                    fi
+                fi
                 fp_now=$(printf '%s\n' "$content" | cksum 2>/dev/null)
                 if [[ -n "$fp_now" ]]; then
                     tmux set-option -w -t "$window_id" @code_notify_pause_fp \
-                        "$pane $fp_now 0 $(tmux_resume_poll_dialog_flag "$content")" 2>/dev/null
+                        "$pane_state $fp_now 0 $marker_now" 2>/dev/null
                 fi
             fi
             waiting=1
@@ -2902,34 +3246,66 @@ tmux_resume_poll_sweep() {
         # wrong-window capture must not read as "content changed". Such
         # windows stay in waiting state until a hook, the agent-exit
         # monitor, or the poll TTL retires them.
-        if [[ "$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)" != "$window_id" ]]; then
+        pane_window=$(tmux display-message -p -t "$pane" \
+            '#{window_id}' 2>/dev/null)
+        if [[ "$pane_window" != "$window_id" ]]; then
             waiting=1
             continue
         fi
-        if ! content=$(tmux capture-pane -p -t "$pane" 2>/dev/null); then
+        if ! tmux_resume_poll_capture "$pane" "$cancel_enabled"; then
             waiting=1
             continue
         fi
+        content="$TMUX_RESUME_POLL_CONTENT"
         fp_now=$(printf '%s\n' "$content" | cksum 2>/dev/null)
         if [[ -z "$fp_now" ]]; then
             waiting=1
             continue
         fi
         marker_now=$(tmux_resume_poll_dialog_flag "$content")
+        cancel_now="${TMUX_RESUME_POLL_CANCEL_COUNT:-0}"
+        [[ "$cancel_now" =~ ^[0-9]+$ ]] || cancel_now=0
+        baseline_learned=0
+        if [[ ! "$cancel_baseline" =~ ^[0-9]+$ ]]; then
+            cancel_baseline="$cancel_now"
+            pane_state="$pane,$cancel_baseline"
+            if [[ -n "$pause_gen$pause_agent" ]]; then
+                pane_state+=",$pause_gen"
+                [[ -n "$pause_agent" ]] && pane_state+=",$pause_agent"
+            fi
+            baseline_learned=1
+        elif [[ "$marker_now" == "1" ]] && (( cancel_now > cancel_baseline )); then
+            # A live dialog proves this request has not produced a rejection;
+            # ratchet past declines from sibling asks before the dialog leaves.
+            cancel_baseline="$cancel_now"
+            pane_state="$pane,$cancel_baseline"
+            if [[ -n "$pause_gen$pause_agent" ]]; then
+                pane_state+=",$pause_gen"
+                [[ -n "$pause_agent" ]] && pane_state+=",$pause_agent"
+            fi
+        fi
         if [[ "$marker_now" == "1" ]]; then
             # The dialog text is on screen: unanswered, no matter what else
             # in the pane animates. Track the moving content so its eventual
             # disappearance is judged against the freshest baseline.
             tmux set-option -w -t "$window_id" @code_notify_pause_fp \
-                "$pane $fp_now 0 1" 2>/dev/null
+                "$pane_state $fp_now 0 1" 2>/dev/null
             waiting=1
+        elif (( cancel_now > cancel_baseline )); then
+            # Rejection is terminal, not a resumed turn. Antigravity emits no
+            # PostToolUse/Stop for this path, so consume the pause and remove
+            # its engage-clear badge directly instead of waiting forever for
+            # a second repaint that will never arrive.
+            if ! tmux_running_cancel_input_window "$window_id" "$pending" "$fp"; then
+                waiting=1
+            fi
         elif [[ "$dialog" == "1" ]]; then
             # The marker just vanished — an answer OR a view toggle hiding
             # the dialog. Re-baseline and let the fingerprint heuristic
             # decide from here: an answered turn keeps repainting, a
             # transcript view over a waiting dialog holds still.
             tmux set-option -w -t "$window_id" @code_notify_pause_fp \
-                "$pane $fp_now 0 0" 2>/dev/null
+                "$pane_state $fp_now 0 0" 2>/dev/null
             waiting=1
         elif [[ "$fp_now" != "$fp_saved" ]]; then
             if [[ "$changed" == "1" ]]; then
@@ -2941,15 +3317,15 @@ tmux_resume_poll_sweep() {
                 # focus/view repaint. Re-baseline, remember that this tick
                 # changed, and let the next tick decide.
                 tmux set-option -w -t "$window_id" @code_notify_pause_fp \
-                    "$pane $fp_now 1 0" 2>/dev/null
+                    "$pane_state $fp_now 1 0" 2>/dev/null
                 waiting=1
             fi
         else
             # Still tick: a preceding one-shot change was not an answer, so
             # drop the changed flag.
-            if [[ "$changed" == "1" ]]; then
+            if [[ "$changed" == "1" ]] || (( baseline_learned )); then
                 tmux set-option -w -t "$window_id" @code_notify_pause_fp \
-                    "$pane $fp_now 0 0" 2>/dev/null
+                    "$pane_state $fp_now 0 0" 2>/dev/null
             fi
             waiting=1
         fi
@@ -2981,6 +3357,80 @@ tmux_resume_poll_dialog_flag() {
         return
     fi
     printf '1'
+}
+
+# Capture the pane's actual visible content for dialog/fingerprint decisions.
+# This intentionally uses ordinary `capture-pane -p`, preserving the exact
+# input and blank-row semantics the resume poll used before decline detection.
+# Only an agent eligible for the Antigravity rejection marker pays for the
+# second, retained-history capture. Keeping the two representations separate
+# avoids reconstructing a viewport from history (which is both expensive with
+# `-N` padding and incorrect when command substitution strips blank bottom
+# rows). History counting is advisory: a failed capture or malformed user ERE
+# must not suppress dialog/fingerprint evaluation of valid visible content.
+tmux_resume_poll_capture() {
+    local pane_id="$1" cancel_enabled="${2:-0}"
+    TMUX_RESUME_POLL_CONTENT=""
+    TMUX_RESUME_POLL_CANCEL_COUNT=0
+    TMUX_RESUME_POLL_CONTENT=$(tmux capture-pane -p -t "$pane_id" 2>/dev/null) || return 1
+    if [[ "$cancel_enabled" == "1" ]]; then
+        tmux_resume_poll_cancel_history_count "$pane_id" || true
+    fi
+    return 0
+}
+
+# Whether a pause owned by $1 should scan for the Antigravity-only rejection
+# marker. Both a non-empty marker and an explicit agent allowlist match are
+# required; all other agents remain on the visible-capture-only hot path.
+tmux_resume_poll_cancel_enabled() {
+    local agent="$1"
+    [[ -n "$TMUX_DIALOG_CANCEL_MARKERS" ]] && [[ -n "$agent" ]] &&
+        [[ "|$TMUX_DIALOG_CANCEL_AGENTS|" == *"|$agent|"* ]]
+}
+
+# Retained-history rejection count used by both the pause-time baseline and
+# eligible poll ticks. Capture failure is distinguished from a valid zero;
+# grep exit 1 means simply that no marker matched.
+tmux_resume_poll_cancel_history_count() {
+    local pane_id="$1" history count status
+    TMUX_RESUME_POLL_CANCEL_COUNT=0
+    [[ -n "$TMUX_DIALOG_CANCEL_MARKERS" ]] || return 0
+    history=$(tmux capture-pane -p -S - -t "$pane_id" 2>/dev/null) || return 1
+    count=$(printf '%s\n' "$history" |
+        grep -cE -e "$TMUX_DIALOG_CANCEL_MARKERS" 2>/dev/null)
+    status=$?
+    (( status <= 1 )) || return 1
+    [[ "$count" =~ ^[0-9]+$ ]] || return 1
+    TMUX_RESUME_POLL_CANCEL_COUNT="$count"
+    return 0
+}
+
+# Count explicit Antigravity rejection rows in a retained pane capture. Returns
+# the result through TMUX_RESUME_POLL_CANCEL_COUNT so callers do not need a
+# command substitution. The pause hook records this synchronously, then the
+# poll cancels only when the history count grows; an
+# older declined card can therefore survive dialog paint delays and ordinary
+# tmux viewport movement without being attributed to the new request. One
+# ambiguity is irreducible from pane snapshots: an application-level transcript
+# view can redraw an older, previously unrendered decline into tmux's retained
+# image while hiding the live dialog. That is visually identical to a fresh
+# rejection until the application exposes another state transition. Conversely,
+# a saturated tmux history can evict one old decline as a new one arrives and
+# keep the count flat; that direction is fail-safe and merely leaves the badge
+# for the existing lifecycle/TTL cleanup.
+tmux_resume_poll_cancel_count() {
+    local content="$1" line count=0
+    TMUX_RESUME_POLL_CANCEL_COUNT=0
+    if [[ -z "$TMUX_DIALOG_CANCEL_MARKERS" ]]; then
+        return 0
+    fi
+    while IFS= read -r line; do
+        if [[ "$line" =~ $TMUX_DIALOG_CANCEL_MARKERS ]]; then
+            count=$((count + 1))
+        fi
+    done <<< "$content"
+    TMUX_RESUME_POLL_CANCEL_COUNT="$count"
+    return 0
 }
 
 # The piggyback call sites above all require *something* to happen on this

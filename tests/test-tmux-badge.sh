@@ -85,6 +85,15 @@ if [[ "${args[0]}" == "-S" ]]; then
 fi
 cmd="${args[0]}"
 args=("${args[@]:1}")
+capture_history=0
+if [[ "$cmd" == "capture-pane" ]]; then
+    for ((i = 0; i + 1 < ${#args[@]}; i++)); do
+        if [[ "${args[$i]}" == "-S" ]] && [[ "${args[$((i + 1))]}" == "-" ]]; then
+            capture_history=1
+            break
+        fi
+    done
+fi
 target=""
 fmt=""
 unset_opt=0
@@ -104,6 +113,10 @@ case "$cmd" in
         # reads the stateful name (kept current by rename-window); the focus
         # target format (session/window/pane IDs) is a fixture.
         case "${rest[0]}" in
+            '#{window_id}|#{pane_height}')
+                printf '%s|%s\n' "${FAKE_TMUX_PANE_WINDOW-@2}" \
+                    "${FAKE_TMUX_PANE_HEIGHT:-24}"
+                ;;
             *"|"*)
                 if [[ "${FAKE_TMUX_DYNAMIC_BADGE_INFO:-}" == "1" ]]; then
                     badge_window="${FAKE_TMUX_PANE_WINDOW-@2}"
@@ -150,13 +163,14 @@ case "$cmd" in
                 rp=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_resume_pending" 2>/dev/null)
                 dc=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_dialog_ctx" 2>/dev/null)
                 ds=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_dialog_since" 2>/dev/null)
+                dg=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_dialog_grace" 2>/dev/null)
                 ip=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_interrupt_pane" 2>/dev/null)
                 ifp=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_interrupt_fp" 2>/dev/null)
                 is=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_interrupt_since" 2>/dev/null)
                 bo=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_settle_badge_only" 2>/dev/null)
                 on=$(cat "$FAKE_TMUX_STATE/${w}.@code_notify_orig_name" 2>/dev/null)
-                printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
-                    "$w" "$pid" "$run" "$gen" "$sp" "$iw" "$rp" "$dc" "$ds" "$ip" "$ifp" "$is" "$bo" "$on"
+                printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+                    "$w" "$pid" "$run" "$gen" "$sp" "$iw" "$rp" "$dc" "$ds" "$dg" "$ip" "$ifp" "$is" "$bo" "$on"
             done
         elif [[ "$fmt" == *resume_pending* ]]; then
             # The resume poll pairs each pending epoch with the window's
@@ -269,7 +283,11 @@ case "$cmd" in
     capture-pane)
         # Real capture-pane fails on a vanished pane; mirror that so the
         # fail-propagation in tmux_resume_poll_fingerprint is exercised.
-        cat "$FAKE_TMUX_STATE/${target}.pane_content" 2>/dev/null || exit 1
+        if (( capture_history )) && [[ -f "$FAKE_TMUX_STATE/${target}.pane_history" ]]; then
+            cat "$FAKE_TMUX_STATE/${target}.pane_history" 2>/dev/null || exit 1
+        else
+            cat "$FAKE_TMUX_STATE/${target}.pane_content" 2>/dev/null || exit 1
+        fi
         ;;
     run-shell)
         # run-shell -d needs tmux >= 3.2; the knob simulates that failure so
@@ -1181,6 +1199,8 @@ pass "input pause resumes the running indicator once"
 # `:-`, so an empty value sticks).
 default_markers="$TMUX_DIALOG_MARKERS"
 default_options="$TMUX_DIALOG_OPTIONS"
+default_cancel_markers="$TMUX_DIALOG_CANCEL_MARKERS"
+default_cancel_agents="$TMUX_DIALOG_CANCEL_AGENTS"
 # The exact real Claude Code permission rendering: a "Do you want …?" question
 # and an indented "❯ 1. Yes" selector cursor (note the leading space before ❯).
 real_dialog=$'Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don\'t ask again\n   3. No'
@@ -1225,6 +1245,21 @@ agy_subagent_dialog=$'research needs approval for Read\n\nctrl+k approve · alt+
     || fail "an Allow question with no selector must not match"
 [[ "$(tmux_resume_poll_dialog_flag "The setting needs approval for deployment to work.")" == "0" ]] \
     || fail "prose containing 'needs approval for' with no selector must not match"
+# Antigravity renders this exact status when a permission is rejected and
+# emits no matching lifecycle hook. It must be distinguishable from prose so
+# the pause poll can retire the waiting badge without inventing a resumed run.
+agy_declined=$'Command\n  └ User declined the tool call'
+tmux_resume_poll_cancel_count "$agy_declined"
+[[ "$TMUX_RESUME_POLL_CANCEL_COUNT" == "1" ]] \
+    || fail "the default should match Antigravity's declined-tool status"
+tmux_resume_poll_cancel_count "The log says User declined the tool call yesterday"
+[[ "$TMUX_RESUME_POLL_CANCEL_COUNT" == "0" ]] \
+    || fail "mid-line decline prose must not be mistaken for a cancelled dialog"
+TMUX_DIALOG_CANCEL_MARKERS=""
+tmux_resume_poll_cancel_count "$agy_declined"
+[[ "$TMUX_RESUME_POLL_CANCEL_COUNT" == "0" ]] \
+    || fail "an empty cancel pattern should disable rejection detection"
+TMUX_DIALOG_CANCEL_MARKERS="$default_cancel_markers"
 TMUX_DIALOG_OPTIONS=""
 [[ "$(tmux_resume_poll_dialog_flag "Do you want to proceed?")" == "1" ]] \
     || fail "an empty options pattern should fall back to question-only matching"
@@ -1237,13 +1272,17 @@ TMUX_DIALOG_MARKERS="$default_markers"
 # revert to the default (regression against the `:-` expansion), and an unset
 # one must fall back to the default.
 ( CODE_NOTIFY_TMUX_DIALOG_MARKERS="" CODE_NOTIFY_TMUX_DIALOG_OPTIONS="" \
+      CODE_NOTIFY_TMUX_DIALOG_CANCEL_MARKERS="" \
       source "$ROOT_DIR/lib/code-notify/utils/tmux.sh"
-  [[ -z "$TMUX_DIALOG_MARKERS" && -z "$TMUX_DIALOG_OPTIONS" ]] \
+  [[ -z "$TMUX_DIALOG_MARKERS" && -z "$TMUX_DIALOG_OPTIONS" &&
+      -z "$TMUX_DIALOG_CANCEL_MARKERS" ]] \
       || fail "REGRESSION: explicit empty overrides must not revert to the default" ) \
     || exit 1
-( unset CODE_NOTIFY_TMUX_DIALOG_MARKERS CODE_NOTIFY_TMUX_DIALOG_OPTIONS
+( unset CODE_NOTIFY_TMUX_DIALOG_MARKERS CODE_NOTIFY_TMUX_DIALOG_OPTIONS \
+      CODE_NOTIFY_TMUX_DIALOG_CANCEL_MARKERS
   source "$ROOT_DIR/lib/code-notify/utils/tmux.sh"
-  [[ -n "$TMUX_DIALOG_MARKERS" && -n "$TMUX_DIALOG_OPTIONS" ]] \
+  [[ -n "$TMUX_DIALOG_MARKERS" && -n "$TMUX_DIALOG_OPTIONS" &&
+      -n "$TMUX_DIALOG_CANCEL_MARKERS" ]] \
       || fail "unset overrides should fall back to the default patterns" ) \
     || exit 1
 # A custom pattern beginning with "-" must be treated as a pattern, not a grep
@@ -1255,7 +1294,60 @@ TMUX_DIALOG_MARKERS="-x approval"
     || fail "REGRESSION: a marker pattern starting with - must be treated as a pattern"
 TMUX_DIALOG_MARKERS="$default_markers"
 TMUX_DIALOG_OPTIONS="$default_options"
+tmux_resume_poll_cancel_enabled antigravity \
+    || fail "Antigravity should be eligible for decline detection by default"
+tmux_resume_poll_cancel_enabled claude \
+    && fail "Claude must not pay for Antigravity-only decline detection"
+TMUX_DIALOG_CANCEL_AGENTS="codex"
+tmux_resume_poll_cancel_enabled codex \
+    || fail "the decline-detection agent allowlist should be configurable"
+tmux_resume_poll_cancel_enabled antigravity \
+    && fail "the configured decline allowlist should replace the default"
+TMUX_DIALOG_CANCEL_AGENTS="$default_cancel_agents"
 pass "dialog-marker helper needs question plus selector, prose-safe, disablable"
+
+# --- resume capture keeps visible content separate from retained history ---
+# Dialog/fingerprint input must come directly from ordinary capture-pane -p;
+# retained history is a second Antigravity-only input used solely for the
+# monotonic decline count. Reconstructing the viewport from `-N -S -` shifts
+# blank-bottom screens upward and turns padded history into a Bash hot loop.
+printf '%s' "VISIBLE SCREEN WITH BLANK BOTTOM ROWS" > "$state_dir/%3.pane_content"
+printf '%s\n%s' "OFFSCREEN HISTORY" "$agy_declined" > "$state_dir/%3.pane_history"
+: > "$log_file"
+tmux_resume_poll_capture "%3" 0 || fail "visible-only resume capture should succeed"
+[[ "$TMUX_RESUME_POLL_CONTENT" == "VISIBLE SCREEN WITH BLANK BOTTOM ROWS" ]] \
+    || fail "visible-only capture must preserve ordinary capture-pane input"
+[[ "$TMUX_RESUME_POLL_CANCEL_COUNT" == "0" ]] \
+    || fail "a non-eligible agent capture must not scan retained history"
+[[ "$(grep -c 'capture-pane ' "$log_file")" == "1" ]] \
+    || fail "a non-eligible agent should pay for one visible capture only"
+grep -q 'capture-pane .* -S -' "$log_file" \
+    && fail "a non-eligible agent must not capture retained history"
+: > "$log_file"
+tmux_resume_poll_capture "%3" 1 || fail "Antigravity resume capture should succeed"
+[[ "$TMUX_RESUME_POLL_CONTENT" == "VISIBLE SCREEN WITH BLANK BOTTOM ROWS" ]] \
+    || fail "history counting must not replace the visible fingerprint input"
+[[ "$TMUX_RESUME_POLL_CANCEL_COUNT" == "1" ]] \
+    || fail "eligible capture should count declines in retained history"
+[[ "$(grep -c 'capture-pane ' "$log_file")" == "2" ]] \
+    || fail "eligible capture should use one visible and one history capture"
+grep -q 'capture-pane .* -N' "$log_file" \
+    && fail "resume capture must not request padded -N history"
+# A malformed user ERE makes grep exit 2. Decline detection is advisory: the
+# valid visible capture must still reach dialog/fingerprint evaluation so an
+# answered request can resume normally.
+TMUX_DIALOG_CANCEL_MARKERS='User declined ([unclosed'
+tmux_resume_poll_cancel_history_count "%3" \
+    && fail "the malformed-ERE fixture should make history counting fail"
+tmux_resume_poll_capture "%3" 1 \
+    || fail "a malformed decline ERE must not fail the visible capture"
+[[ "$TMUX_RESUME_POLL_CONTENT" == "VISIBLE SCREEN WITH BLANK BOTTOM ROWS" ]] \
+    || fail "malformed decline detection must preserve visible content"
+[[ "$TMUX_RESUME_POLL_CANCEL_COUNT" == "0" ]] \
+    || fail "a failed decline count should degrade to no decline this tick"
+TMUX_DIALOG_CANCEL_MARKERS="$default_cancel_markers"
+rm -f "$state_dir/%3.pane_content" "$state_dir/%3.pane_history"
+pass "resume capture preserves visible content across optional history failures"
 
 # --- a watched input pause defers its snapshot and schedules the poll ---
 # No hook fires when the user answers an approval dialog, so a "watch" pause
@@ -1266,17 +1358,20 @@ pass "dialog-marker helper needs question plus selector, prose-safe, disablable"
 # running-indicator configuration — the timer's fresh process would otherwise
 # resume with default icon/spinner/TTL, flipping per-session overrides.
 rm -f "$state_dir/.@code_notify_resume_poll_scheduled"
-printf '%s' "approval dialog" > "$state_dir/%3.pane_content"
+# A declined card from an older request is already visible when this new pause
+# is armed. Its count becomes this request's synchronous rejection baseline.
+printf '%s' "$agy_declined" > "$state_dir/%3.pane_content"
 TMUX_RUNNING_ICON="🚀"   # per-session override; must survive into the payload
 tmux_running_start || fail "running-start before the poll-schedule test should succeed"
 : > "$log_file"
-tmux_running_pause_for_input watch || fail "watched pause for the poll-schedule test should succeed"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_pause_for_input watch \
+    || fail "watched pause for the poll-schedule test should succeed"
 grep -q "^run-shell -b -d 2 " "$log_file" \
     || fail "a watched input pause should schedule the 2s resume poll"
 [[ -f "$state_dir/.@code_notify_resume_poll_scheduled" ]] \
     || fail "the pending poll should be recorded in @code_notify_resume_poll_scheduled"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3" ]] \
-    || fail "a watched pause should defer its dialog snapshot"
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,1,"* ]] \
+    || fail "a watched pause should defer its checksum and record baseline plus generation"
 grep "^run-shell -b -d 2 " "$log_file" | grep -q "CODE_NOTIFY_TMUX_RUNNING_ICON='🚀'" \
     || fail "the poll payload should carry the running-indicator configuration"
 pass "watched pause defers the dialog snapshot and schedules the poll"
@@ -1287,6 +1382,38 @@ pass "watched pause defers the dialog snapshot and schedules the poll"
 # first poll must absorb that change as its baseline, not call it an answer.
 payload=$(sed -n 's/^run-shell -b -d 2 \(.*\)$/\1/p' "$log_file" | head -n 1)
 [[ -n "$payload" ]] || fail "the poll payload should be extractable from the run-shell call"
+payload_has_setting() {
+    local payload_text="$1" setting="$2" value="$3" expected
+    expected="$setting=$(tmux_focus_shell_quote "$value")"
+    expected="${expected//\#/##}"
+    [[ "$payload_text" == *"$expected"* ]]
+}
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_AGENT_EXIT_POLL_SECONDS "$TMUX_AGENT_EXIT_POLL_SECONDS" \
+    || fail "resume payload must preserve the agent-exit poll interval"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_SETTLE_SECONDS "$TMUX_SETTLE_SECONDS" \
+    || fail "resume payload must preserve the settle threshold"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_IDLE_SECONDS "$TMUX_IDLE_SECONDS" \
+    || fail "resume payload must preserve the idle threshold"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_IDLE_AGENTS "$TMUX_IDLE_AGENTS" \
+    || fail "resume payload must preserve the idle-agent allowlist"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_DIALOG_NOTIFY_SECONDS "$TMUX_DIALOG_NOTIFY_SECONDS" \
+    || fail "resume payload must preserve the dialog-watch threshold"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_DIALOG_WATCH_AGENTS "$TMUX_DIALOG_WATCH_AGENTS" \
+    || fail "resume payload must preserve the dialog-watch allowlist"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_DIALOG_CANCEL_AGENTS "$TMUX_DIALOG_CANCEL_AGENTS" \
+    || fail "resume payload must preserve the decline-detection allowlist"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_INTERRUPT_SECONDS "$TMUX_INTERRUPT_SECONDS" \
+    || fail "resume payload must preserve the interrupt threshold"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_INTERRUPT_WATCH_AGENTS "$TMUX_INTERRUPT_WATCH_AGENTS" \
+    || fail "resume payload must preserve the interrupt allowlist"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_INTERRUPT_MARKERS "$TMUX_INTERRUPT_MARKERS" \
+    || fail "resume payload must preserve interrupt markers"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_INTERRUPT_QUIET_SECONDS "$TMUX_INTERRUPT_QUIET_SECONDS" \
+    || fail "resume payload must preserve interrupt quiet time"
+payload_has_setting "$payload" CODE_NOTIFY_TMUX_BUSY_MARKERS "$TMUX_BUSY_MARKERS" \
+    || fail "resume payload must preserve busy markers"
+payload_has_setting "$payload" CODE_NOTIFY_NOTIFIER_PATH "${CODE_NOTIFY_NOTIFIER_PATH:-}" \
+    || fail "resume payload must preserve the notifier override"
 # Each registration carries a fresh chain token, so a re-fired stale payload
 # string deliberately loses ownership and exits (asserted in its own test
 # below). Between ticks, adopt the payload the previous tick re-scheduled —
@@ -1299,7 +1426,10 @@ fire_poll_payload() {
     return 0
 }
 pending=$(cat "$state_dir/@2.@code_notify_resume_pending")
-printf '%s' "approval dialog after hook status cleared" > "$state_dir/%3.pane_content"
+# The new dialog still has not painted. Seeing exactly the old baseline count
+# must keep the pause alive rather than attributing that card to this request.
+printf '%s\n%s' "$agy_declined" "hook status cleared; new dialog not painted" \
+    > "$state_dir/%3.pane_content"
 printf '%s' "$((pending + 5))" > "$state_dir/@2.window_activity"
 : > "$log_file"
 fire_poll_payload || fail "the poll payload should run cleanly"
@@ -1307,7 +1437,7 @@ fire_poll_payload || fail "the poll payload should run cleanly"
     || fail "the first poll must not restore the running epoch"
 [[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
     || fail "a quiet window should keep its pause marker"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3 "* ]] \
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,1,"*" "* ]] \
     || fail "the first poll should save the settled dialog baseline"
 grep -q "^run-shell -b -d 2 " "$log_file" \
     || fail "the poll should reschedule while a pause marker remains"
@@ -1371,7 +1501,7 @@ fire_poll_payload || fail "the one-shot poll payload should run cleanly"
     || fail "a one-shot repaint must not restore the running epoch"
 [[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
     || fail "a one-shot repaint should keep the pause marker"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3 "*" 1 0" ]] \
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,1,"*" 1 0" ]] \
     || fail "a first content change should re-baseline with the changed flag"
 grep -q "^run-shell -b -d 2 " "$log_file" \
     || fail "the poll should keep watching after a one-shot repaint"
@@ -1379,7 +1509,7 @@ grep -q "^run-shell -b -d 2 " "$log_file" \
 fire_poll_payload || fail "the still-tick poll payload should run cleanly"
 [[ ! -f "$state_dir/@2.@code_notify_running" ]] \
     || fail "a still tick after a one-shot repaint must not resume"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3 "*" 0 0" ]] \
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,1,"*" 0 0" ]] \
     || fail "a still tick should drop the changed flag"
 pass "one-shot repaint re-baselines instead of resuming"
 
@@ -1390,13 +1520,26 @@ pass "one-shot repaint re-baselines instead of resuming"
 # selector) the poll must keep waiting, however much the rest of the pane
 # moves. The selector row is stable; only the dot line animates.
 dialog_head=$'Do you want to run this command?\n❯ 1. Yes\n  3. No'
-printf '%s\n%s' "$dialog_head" "· make test (2s)" \
+# A prior rejected card can remain visible above a newer request; the live
+# dialog must win over that stale terminal line.
+printf '%s\n%s\n%s' "$agy_declined" "$dialog_head" "· make test (2s)" \
     > "$state_dir/%3.pane_content"
+# A sibling ask is declined while this dialog remains visibly unanswered.
+# Retained history now has two decline rows, but the visible tail is only the
+# live dialog. The poll must absorb the sibling transition into this pause's
+# baseline rather than cancelling when this dialog is later approved.
+printf '%s\n%s\n%s\n%s' "$agy_declined" "$agy_declined" "$dialog_head" \
+    "· make test (2s)" > "$state_dir/%3.pane_history"
+export FAKE_TMUX_PANE_HEIGHT=4
 fire_poll_payload || fail "the dialog-marker tick should run cleanly"
+unset FAKE_TMUX_PANE_HEIGHT
+rm -f "$state_dir/%3.pane_history"
 [[ ! -f "$state_dir/@2.@code_notify_running" ]] \
     || fail "an on-screen dialog must not resume on a content change"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3 "*" 0 1" ]] \
-    || fail "the marker tick should record the dialog flag"
+[[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "a stale declined card must not cancel a newer on-screen dialog"
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,2,"*" 0 1" ]] \
+    || fail "the marker tick should absorb sibling declines and record the dialog flag"
 printf '%s\n%s' "$dialog_head" "• make test (4s)" \
     > "$state_dir/%3.pane_content"
 fire_poll_payload || fail "the animated-dialog tick should run cleanly"
@@ -1407,7 +1550,7 @@ printf '%s\n%s' "$dialog_head" "· make test (6s)" \
 fire_poll_payload || fail "the third animated-dialog tick should run cleanly"
 [[ ! -f "$state_dir/@2.@code_notify_running" ]] \
     || fail "sustained animation under an on-screen dialog must not resume"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3 "*" 0 1" ]] \
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,2,"*" 0 1" ]] \
     || fail "the dialog flag should persist while the marker stays on screen"
 pass "on-screen dialog suppresses resume despite continuous animation"
 
@@ -1415,11 +1558,15 @@ pass "on-screen dialog suppresses resume despite continuous animation"
 # The marker vanishing re-baselines and hands over to the fingerprint
 # heuristic: a transcript view over a waiting dialog holds still, so nothing
 # resumes; returning to the normal view re-enters marker mode.
-printf '%s' "transcript view, dialog hidden" > "$state_dir/%3.pane_content"
+# Ctrl+O hides the still-unanswered dialog while exposing the old declined
+# card. Its retained count does not exceed the ratcheted pause baseline, so
+# this is not a rejection transition and must remain watched.
+printf '%s\n%s' "$agy_declined" "transcript view, dialog hidden" \
+    > "$state_dir/%3.pane_content"
 fire_poll_payload || fail "the marker-vanish tick should run cleanly"
 [[ ! -f "$state_dir/@2.@code_notify_running" ]] \
     || fail "hiding the dialog behind the transcript view must not resume"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3 "*" 0 0" ]] \
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,2,"*" 0 0" ]] \
     || fail "the marker-vanish tick should re-baseline without flags"
 fire_poll_payload || fail "the still transcript tick should run cleanly"
 [[ ! -f "$state_dir/@2.@code_notify_running" ]] \
@@ -1429,7 +1576,7 @@ printf '%s\n%s' "$dialog_head" "· make test (20s)" \
 fire_poll_payload || fail "the view-return tick should run cleanly"
 [[ ! -f "$state_dir/@2.@code_notify_running" ]] \
     || fail "returning to the dialog view must not resume"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3 "*" 0 1" ]] \
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,2,"*" 0 1" ]] \
     || fail "returning to the dialog view should re-enter marker mode"
 pass "hiding and revealing the dialog never resumes"
 
@@ -1463,6 +1610,127 @@ rm -f "$state_dir/@2.window_activity" "$state_dir/%3.pane_content"
 tmux_running_stop || fail "cleanup after the poll resume should succeed"
 TMUX_RUNNING_ICON="🌕"
 pass "sustained content change resumes the indicator via the poll"
+
+# --- declining a permission retires the pause instead of resuming it ---
+# Antigravity writes one final status line and emits no PostToolUse/Stop when
+# the user rejects the tool. The pane then holds still, so the ordinary
+# two-repaint approval heuristic can never act: the explicit status must clear
+# the pause, its mirrored flag, and the engage-clear waiting badge directly.
+# The visible pane contains one old decline both before and after this request;
+# only retained history reveals that a second, new decline replaced it. This
+# is the viewport-replacement case a visible-count baseline cannot detect.
+printf '%s' "$agy_declined" > "$state_dir/%3.pane_content"
+printf '%s' "$agy_declined" > "$state_dir/%3.pane_history"
+: > "$log_file"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_start \
+    || fail "running-start before the rejection test should succeed"
+saved_agent_exit_poll="$TMUX_AGENT_EXIT_POLL_SECONDS"
+TMUX_AGENT_EXIT_POLL_SECONDS=0
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_pause_for_input watch \
+    || fail "watched pause before the rejection test should succeed"
+TMUX_AGENT_EXIT_POLL_SECONDS="$saved_agent_exit_poll"
+tmux_badge_set "💬" engage \
+    || fail "permission badge before the rejection test should succeed"
+# A declined ask ends only this pause. Preserve the per-turn contexts needed
+# by queued Antigravity asks, while proving their request-local epochs reset.
+dialog_ctx="%3 antigravity queued-project"
+interrupt_marker="$HOME/.claude/notifications/agy/queued.running"
+mkdir -p "$(dirname "$interrupt_marker")"
+printf '%s' "$dialog_ctx" > "$state_dir/@2.@code_notify_dialog_ctx"
+printf '%s' "1700000000" > "$state_dir/@2.@code_notify_dialog_since"
+printf '%s' "%3" > "$state_dir/@2.@code_notify_interrupt_pane"
+printf '%s' "old-fingerprint" > "$state_dir/@2.@code_notify_interrupt_fp"
+printf '%s' "1700000000" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s' "$interrupt_marker" > "$state_dir/@2.@code_notify_interrupt_markerfile"
+printf '%s' "running-cache" > "$interrupt_marker"
+payload=$(sed -n 's/^run-shell -b -d 2 \(.*\)$/\1/p' "$log_file" | tail -n 1)
+[[ -n "$payload" ]] || fail "the rejection poll payload should be extractable"
+printf '%s' "$agy_declined" > "$state_dir/%3.pane_content"
+printf '%s\n%s' "$agy_declined" "$agy_declined" > "$state_dir/%3.pane_history"
+export FAKE_TMUX_PANE_HEIGHT=1
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+: > "$log_file"
+fire_poll_payload || fail "the rejection poll payload should run cleanly"
+unset FAKE_TMUX_PANE_HEIGHT
+[[ ! -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a rejected permission must not restore the running epoch"
+[[ ! -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "a rejected permission should consume the pause marker"
+[[ ! -f "$state_dir/@2.@code_notify_pause_fp" ]] \
+    || fail "a rejected permission should consume the dialog snapshot"
+[[ ! -e "$(tmux_resume_flag_path '@2')" ]] \
+    || fail "a rejected permission should remove the mirrored resume flag"
+[[ "$(window_name)" == "zsh" ]] \
+    || fail "a rejected permission should clear the waiting badge (got: $(window_name))"
+[[ "$(cat "$state_dir/@2.@code_notify_dialog_ctx" 2>/dev/null)" == "$dialog_ctx" ]] \
+    || fail "a rejected permission must preserve the queued-ask dialog context"
+[[ ! -f "$state_dir/@2.@code_notify_dialog_since" ]] \
+    || fail "a rejected permission should reset the dialog sighting epoch"
+[[ "$(cat "$state_dir/@2.@code_notify_interrupt_pane" 2>/dev/null)" == "%3" ]] \
+    || fail "a rejected permission must preserve the per-turn interrupt pane"
+[[ "$(cat "$state_dir/@2.@code_notify_interrupt_markerfile" 2>/dev/null)" == "$interrupt_marker" ]] \
+    || fail "a rejected permission must preserve the per-turn marker path"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_fp" &&
+    ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "a rejected permission should reset interrupt stillness state"
+[[ ! -f "$interrupt_marker" ]] \
+    || fail "a rejected permission should clear Antigravity's stale running cache"
+dialog_grace=$(cat "$state_dir/@2.@code_notify_dialog_grace" 2>/dev/null)
+[[ "$dialog_grace" == *,* ]] \
+    || fail "a rejected permission should arm a queued-dialog grace generation"
+[[ ! -f "$state_dir/.@code_notify_resume_poll_scheduled" ]] \
+    || fail "a rejected permission should stop the resume poll chain"
+grep -q "^run-shell -b -d 2 " "$log_file" \
+    && fail "a rejected permission must not schedule another resume poll"
+grep -q "^run-shell -b -d 5 " "$log_file" \
+    && fail "a rejection must not resurrect a disabled agent-exit sweep"
+
+# The retained context must be operational, not merely present: with no
+# running epoch, a queued unannounced dialog should still enter the sighting
+# countdown and keep the agent-exit sweep alive under the grace generation.
+printf '%s' "$agy_file_dialog" > "$state_dir/%3.pane_content"
+rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+tmux_agent_exit_sweep || fail "queued-dialog grace sweep should succeed"
+[[ "$(cat "$state_dir/@2.@code_notify_dialog_since" 2>/dev/null)" =~ ^[0-9]+$ ]] \
+    || fail "a queued dialog after rejection should start a synthetic sighting"
+[[ -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled" ]] \
+    || fail "a queued-dialog grace should keep the agent-exit sweep alive"
+rm -f "$state_dir/@2.window_activity" "$state_dir/%3.pane_content" \
+    "$state_dir/%3.pane_history"
+rm -f "$state_dir/@2.@code_notify_dialog_ctx" \
+    "$state_dir/@2.@code_notify_dialog_since" \
+    "$state_dir/@2.@code_notify_dialog_grace" \
+    "$state_dir/@2.@code_notify_interrupt_pane" \
+    "$state_dir/@2.@code_notify_interrupt_markerfile" \
+    "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+pass "decline clears its pause while preserving an active queued-dialog watch"
+
+# --- a stale rejection poll cannot consume a same-second successor pause ---
+# Epoch seconds and a pane/count baseline can repeat across parallel asks. The
+# packed pause generation must still differ, and the locked cancel helper must
+# reject the older snapshot even when the pending epoch is forced identical.
+printf '%s' "approval dialog" > "$state_dir/%3.pane_content"
+tmux_running_start || fail "running-start before pause-generation test should succeed"
+tmux_running_pause_for_input watch \
+    || fail "first watched pause for generation test should succeed"
+stale_pause_pending=$(cat "$state_dir/@2.@code_notify_resume_pending")
+stale_pause_fp=$(cat "$state_dir/@2.@code_notify_pause_fp")
+tmux_running_pause_for_input watch \
+    || fail "successor watched pause for generation test should succeed"
+successor_pause_fp=$(cat "$state_dir/@2.@code_notify_pause_fp")
+[[ "$successor_pause_fp" != "$stale_pause_fp" ]] \
+    || fail "successive pauses must mint distinct generations"
+printf '%s' "$stale_pause_pending" > "$state_dir/@2.@code_notify_resume_pending"
+tmux_running_cancel_input_window "@2" "$stale_pause_pending" "$stale_pause_fp" \
+    && fail "a stale rejection must not cancel a same-epoch successor pause"
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "$successor_pause_fp" ]] \
+    || fail "the successor pause snapshot must survive a stale cancel"
+rm -f "$state_dir/@2.@code_notify_resume_pending" "$state_dir/@2.@code_notify_pause_fp" \
+    "$state_dir/@2.@code_notify_running" "$state_dir/@2.@code_notify_run_gen" \
+    "$state_dir/@2.window_activity" "$state_dir/%3.pane_content" \
+    "$state_dir/.@code_notify_resume_poll_scheduled"
+tmux_resume_flag_clear "@2"
+pass "pause generations reject stale same-second cancellation"
 
 # --- an unanswered request past the poll TTL stops the chain ---
 # A dialog left open must not tick a 2s timer forever, and — even while a
@@ -1514,11 +1782,12 @@ pass "idle-style pause keeps the marker without arming the poll"
 rm -f "$state_dir/.@code_notify_resume_poll_scheduled" "$state_dir/%3.pane_content"
 tmux_running_start || fail "running-start before the no-snapshot test should succeed"
 : > "$log_file"
-tmux_running_pause_for_input watch || fail "watched pause without a capturable pane should succeed"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3" ]] \
-    || fail "a deferred watch should initially retain only its pane id"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_pause_for_input watch \
+    || fail "watched pause without a capturable pane should succeed"
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,-,"* ]] \
+    || fail "an uncapturable watch should retain its pane with an unknown decline baseline"
 tmux_resume_poll_sweep || fail "the first uncapturable-pane poll should succeed"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3" ]] \
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,-,"* ]] \
     || fail "a failed baseline capture must not create a dialog checksum"
 [[ ! -f "$state_dir/@2.@code_notify_running" ]] \
     || fail "a failed baseline capture must not resume the running indicator"
@@ -1530,6 +1799,33 @@ rm -f "$state_dir/@2.@code_notify_resume_pending" \
     "$state_dir/@2.@code_notify_pause_fp" \
     "$state_dir/.@code_notify_resume_poll_scheduled"
 pass "uncapturable pane remains paused while the baseline is retried"
+
+# --- legacy snapshots persist the rejection baseline they learn ---
+# A pause written by the pre-decline format can already carry a checksum but
+# no numeric decline baseline. Learning that baseline on a still tick must
+# rewrite the snapshot immediately; otherwise every tick learns afresh and a
+# later count can never exceed it. Disabled markers must also keep the old
+# resume behavior independent of #{pane_height}.
+legacy_pending=$(date +%s)
+legacy_content="legacy paused dialog snapshot"
+legacy_fp=$(printf '%s\n' "$legacy_content" | cksum)
+printf '%s' "$legacy_content" > "$state_dir/%3.pane_content"
+printf '%s' "$legacy_pending" > "$state_dir/@2.@code_notify_resume_pending"
+printf '%s' "$((legacy_pending + 5))" > "$state_dir/@2.window_activity"
+printf '%s' "%3,-,legacy.gen $legacy_fp 0 0" > "$state_dir/@2.@code_notify_pause_fp"
+rm -f "$state_dir/.@code_notify_resume_poll_scheduled"
+saved_cancel_markers="$TMUX_DIALOG_CANCEL_MARKERS"
+TMUX_DIALOG_CANCEL_MARKERS=""
+export FAKE_TMUX_PANE_HEIGHT=not-a-number
+tmux_resume_poll_sweep || fail "legacy-baseline poll should succeed"
+unset FAKE_TMUX_PANE_HEIGHT
+TMUX_DIALOG_CANCEL_MARKERS="$saved_cancel_markers"
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp")" == "%3,0,legacy.gen "* ]] \
+    || fail "a learned legacy baseline must be persisted on a still tick"
+rm -f "$state_dir/@2.@code_notify_resume_pending" \
+    "$state_dir/@2.@code_notify_pause_fp" "$state_dir/@2.window_activity" \
+    "$state_dir/%3.pane_content" "$state_dir/.@code_notify_resume_poll_scheduled"
+pass "legacy baseline persists without a pane-height dependency"
 
 # --- codex running marker arms the settle watch; claude's does not ---
 # Codex ends /review without any turn-end hook, so its running marker gets a
@@ -1634,6 +1930,16 @@ pass "interrupt watch arms for the listed agents only"
     || fail "the working spinner's 'esc to interrupt' hint must not match"
 [[ "$(tmux_interrupt_flag "the request was interrupted by a timeout")" == "0" ]] \
     || fail "prose mentioning an interruption mid-line must not match"
+# The agent quoting an interrupt line out of a source file is not an interrupt.
+# Claude Code prefixes tool output with line numbers, so the leading run of
+# non-alphabetics must exclude digits or a Read of this very file reads as a
+# cancelled turn — observed blanking a live turn's spinner for its whole run.
+[[ "$(tmux_interrupt_flag "1779      \"  ⎿  Interrupted · What should Claude do instead?\"; do")" == "0" ]] \
+    || fail "a line-numbered rendering of an interrupt line must not match"
+[[ "$(tmux_interrupt_flag "   42→  ⎿  Interrupted · What should Claude do instead?")" == "0" ]] \
+    || fail "a line-numbered read of an interrupt line must not match"
+[[ "$(tmux_interrupt_flag "+  ⎿  Interrupted · What should Claude do instead?")" == "1" ]] \
+    || fail "excluding digits must not disturb other leading decoration"
 [[ "$(CODE_NOTIFY_TMUX_INTERRUPT_MARKERS= ; TMUX_INTERRUPT_MARKERS= ; tmux_interrupt_flag "  ⎿  Interrupted · x")" == "0" ]] \
     || fail "an empty marker set should disable detection"
 pass "interrupt markers cover claude, antigravity and codex without false hits"
@@ -1865,6 +2171,55 @@ tmux_agent_exit_sweep || fail "transcript-view tick should succeed"
 tmux_running_stop || fail "running-stop after the frozen-spinner case should succeed"
 pass "a frozen or hidden working line vetoes the quiet interrupt path"
 
+# --- a working line vetoes the marker-text path too, not just the quiet one ---
+# The observed bug: an agent editing this very file rendered a line-numbered
+# "Interrupted" row into its own tool output, the pane went still in the
+# transcript view, and 5s later the sweep tore down a live turn's indicator. It
+# stayed dark for the rest of the turn — nothing re-lights mid-turn. The digit
+# fix above stops that particular capture matching; this veto is the backstop
+# for every other way an interrupt line can end up on a working pane.
+{
+    printf '%s\n' "❯ fix the interrupt watch"
+    printf '%s\n' "⏺ Read(tests/test-tmux-badge.sh)"
+    printf '%s\n' "  ⎿  Interrupted · What should Claude do instead?"
+    printf '%s\n' "✳ Cascading… (7m 6s · ↓ 8.3k tokens)"
+} > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=claude tmux_prompt_submit \
+    || fail "claude prompt-submit for the busy-with-interrupt-line case should succeed"
+[[ "$(window_name)" == "🌕 zsh" ]] || fail "precondition: running icon should be up"
+tmux_agent_exit_sweep || fail "busy-with-interrupt-line tick should succeed"
+[[ ! -f "$state_dir/@2.@code_notify_interrupt_since" ]] \
+    || fail "a working line must stop the interrupt line starting any countdown"
+# Hold the pane perfectly still and age it well past TMUX_INTERRUPT_SECONDS —
+# the exact conditions that fired the false teardown — then poll twice.
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s\n' "$(cat "$state_dir/%3.pane_content")" | cksum \
+    > "$state_dir/@2.@code_notify_interrupt_fp"
+tmux_agent_exit_sweep || fail "aged busy-with-interrupt-line tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a pane showing work in flight must keep its marker despite an interrupt line"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+tmux_agent_exit_sweep || fail "second aged busy-with-interrupt-line tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "the veto must hold across polls, not just the first"
+[[ "$(window_name)" == "🌕 zsh" ]] \
+    || fail "the live turn must keep its indicator lit (got: $(window_name))"
+# The transcript view is the likeliest way a real turn goes still with the line
+# up: the working row is not rendered at all, so only the busy marker for the
+# view itself stands between a live turn and a teardown.
+{
+    printf '%s\n' "  ⎿  Interrupted · What should Claude do instead?"
+    printf '%s\n' "  Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll"
+} > "$state_dir/%3.pane_content"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s\n' "$(cat "$state_dir/%3.pane_content")" | cksum \
+    > "$state_dir/@2.@code_notify_interrupt_fp"
+tmux_agent_exit_sweep || fail "transcript-view-with-interrupt-line tick should succeed"
+[[ -f "$state_dir/@2.@code_notify_running" ]] \
+    || fail "a transcript-view pane must keep its marker despite an interrupt line"
+tmux_running_stop || fail "running-stop after the busy-veto case should succeed"
+pass "a working line vetoes the marker-text interrupt path"
+
 # --- an approval dialog suppresses the quiet path ---
 # A pane parked on a permission prompt is as still as a cancelled one, but it is
 # a pause the notification hooks own, not an ended turn: retiring here would
@@ -2006,6 +2361,52 @@ CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep
 [[ ! -f "$state_dir/@2.@code_notify_idle_watch" ]] \
     || fail "a silent interrupt teardown must not arm the idle nudge"
 pass "codex interrupt pre-empts the settle completion and the idle nudge"
+
+# --- ...and still pre-empts it when the pane also trips a busy marker ---
+# The busy veto must not hand a Codex interrupt back to the settle watch. Settle
+# has no busy veto of its own and fires purely on stillness, so a vetoed
+# interrupt would fall straight through to it and reach the user as exactly the
+# "Codex is done" completion plus idle nudge this watch exists to suppress. A
+# bullet row is enough to trip TMUX_BUSY_MARKERS and Codex transcripts are full
+# of them, so this is an ordinary interrupt screen, not a contrived one.
+{
+    printf '%s\n' "· Reviewing the diff…"
+    printf '%s\n' "■ Conversation interrupted - tell the model what to do differently."
+} > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=codex tmux_prompt_submit \
+    || fail "codex prompt-submit for the busy-vetoed interrupt should succeed"
+[[ -f "$state_dir/@2.@code_notify_settle_pane" ]] \
+    || fail "precondition: codex should still arm its settle watch"
+tmux_agent_exit_sweep || fail "busy-vetoed codex baseline tick should succeed"
+: > "$settle_notify_log"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_interrupt_since"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_settle_since"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep \
+    || fail "busy-vetoed codex interrupt tick should succeed"
+[[ ! -s "$settle_notify_log" ]] \
+    || fail "a busy-vetoed codex interrupt must not synthesize a completion (got: $(cat "$settle_notify_log"))"
+[[ ! -f "$state_dir/@2.@code_notify_idle_watch" ]] \
+    || fail "a busy-vetoed codex interrupt must not arm the idle nudge"
+tmux_running_stop || fail "running-stop after the busy-vetoed codex case should succeed"
+pass "a busy-vetoed codex interrupt does not fall through to the settle completion"
+
+# --- ...but the same busy row alone does NOT cost a stall its completion ---
+# The counterpart to the case above, and the reason the suppression keys on the
+# interrupt line rather than on the busy flag: a hook-less Codex stall is
+# exactly what settle exists to notify, and its transcript may well end on a
+# bullet row. Vetoing settle on the busy flag alone would silently swallow that
+# completion — a worse failure than the one being fixed.
+printf '%s\n' "· Reviewing the diff…" > "$state_dir/%3.pane_content"
+CODE_NOTIFY_TMUX_AGENT_NAME=codex tmux_prompt_submit \
+    || fail "codex prompt-submit for the busy-row stall should succeed"
+tmux_agent_exit_sweep || fail "busy-row stall baseline tick should succeed"
+: > "$settle_notify_log"
+printf '%s' "$(( $(date +%s) - 600 ))" > "$state_dir/@2.@code_notify_settle_since"
+CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/settle-notifier-stub" tmux_agent_exit_sweep \
+    || fail "busy-row stall settle tick should succeed"
+[[ -s "$settle_notify_log" ]] \
+    || fail "a stall with no interrupt line must still synthesize its completion"
+pass "a busy row alone does not suppress the codex settle completion"
 
 # --- a preserved stop's badge-only settle watch outranks the interrupt watch ---
 # That stop withheld its terminal badge for the settle reconcile to apply; a
@@ -2428,6 +2829,17 @@ CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" tmux_synthetic_guard_ok \
 rm -f "$state_dir/@2.@code_notify_running" "$state_dir/@2.@code_notify_run_gen"
 CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" tmux_synthetic_guard_ok \
     || fail "a still-idle window must let the idle nudge through"
+guard_grace_expiry="$(( $(date +%s) + 60 ))"
+printf '%s' "$guard_grace_expiry,grace-A" > "$state_dir/@2.@code_notify_dialog_grace"
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" \
+    CODE_NOTIFY_TMUX_GUARD_DIALOG_GRACE="$guard_grace_expiry,grace-A" \
+    tmux_synthetic_guard_ok \
+    || fail "an unchanged queued-dialog grace must pass the guard"
+CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" \
+    CODE_NOTIFY_TMUX_GUARD_DIALOG_GRACE="$guard_grace_expiry,grace-stale" \
+    tmux_synthetic_guard_ok \
+    && fail "a replaced queued-dialog grace must fail the guard"
+rm -f "$state_dir/@2.@code_notify_dialog_grace"
 printf '%s' "$(( $(date +%s) - TMUX_RUNNING_TTL - 1 ))" > "$state_dir/@2.@code_notify_running"
 CODE_NOTIFY_TMUX_GUARD_WINDOW="@2" tmux_synthetic_guard_ok \
     || fail "a stale epoch is not a live turn and must not cancel the nudge"
@@ -2477,7 +2889,7 @@ pass "detached watch children carry the state their sweep validated"
 # child the successor's own generation and the child would dutifully confirm
 # it — delivering a stale approval against a turn that never had a dialog.
 for opt_name in @code_notify_running @code_notify_run_gen @code_notify_dialog_ctx \
-    @code_notify_dialog_since; do
+    @code_notify_dialog_since @code_notify_dialog_grace; do
     rm -f "$state_dir/@2.$opt_name"
 done
 printf '%s' "idle_prompt|permission_prompt" > "$HOME/.claude/notifications/notify-types"
@@ -2510,6 +2922,7 @@ wait_for_guard_log || fail "an unraced sighting should invoke the notifier"
     || fail "the child should carry the observed run pair (got: $(cat "$guard_env_log"))"
 tmux_running_stop || fail "cleanup stop for the same-second successor test should succeed"
 rm -f "$state_dir/@2.@code_notify_dialog_ctx" "$state_dir/@2.@code_notify_dialog_since" \
+    "$state_dir/@2.@code_notify_dialog_grace" \
     "$state_dir/%3.pane_content" "$HOME/.claude/notifications/notify-types" \
     "$state_dir/.@code_notify_agent_exit_sweep_scheduled" "$gen_race_marker"
 pass "a same-second successor cancels the sighting instead of relabelling it"
@@ -2603,7 +3016,7 @@ tmux_running_start || fail "running-start before the pause control should succee
 tmux_running_pause_for_input watch || fail "an unraced pause should succeed"
 [[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
     || fail "an unraced pause should park the wait"
-[[ "$(cat "$state_dir/@2.@code_notify_pause_fp" 2>/dev/null)" == "%3" ]] \
+[[ "$(cat "$state_dir/@2.@code_notify_pause_fp" 2>/dev/null)" == "%3,0,"* ]] \
     || fail "an unraced pause should record the watched pane"
 [[ -f "$state_dir/.@code_notify_resume_poll_scheduled" ]] \
     || fail "an unraced watched pause should schedule the resume poll"
@@ -2691,16 +3104,23 @@ printf '%s' "%3 1000 $idle_fp stable codex projX" > "$state_dir/@2.@code_notify_
 rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
 : > "$log_file"
 : > "$idle_notify_log"
+saved_cancel_markers="$TMUX_DIALOG_CANCEL_MARKERS"
+TMUX_DIALOG_CANCEL_MARKERS=""
 CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/notifier-stub" tmux_agent_exit_schedule_sweep \
     || fail "scheduling chain A should succeed"
 # Simulate the race: chain B's pending check read the flag before A wrote it.
 rm -f "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
 CODE_NOTIFY_NOTIFIER_PATH="$fake_bin/notifier-stub" tmux_agent_exit_schedule_sweep \
     || fail "scheduling chain B should succeed"
+TMUX_DIALOG_CANCEL_MARKERS="$saved_cancel_markers"
 race_payload_a=$(sed -n 's/^run-shell -b -d 5 \(.*\)$/\1/p' "$log_file" | head -n 1)
 race_payload_b=$(sed -n 's/^run-shell -b -d 5 \(.*\)$/\1/p' "$log_file" | tail -n 1)
 [[ -n "$race_payload_a" ]] && [[ -n "$race_payload_b" ]] \
     || fail "both raced payloads should be extractable"
+payload_has_setting "$race_payload_a" CODE_NOTIFY_TMUX_DIALOG_CANCEL_MARKERS "" \
+    || fail "agent-exit payload must preserve disabled/custom decline markers"
+payload_has_setting "$race_payload_a" CODE_NOTIFY_TMUX_DIALOG_CANCEL_AGENTS "$TMUX_DIALOG_CANCEL_AGENTS" \
+    || fail "agent-exit payload must preserve the decline-detection allowlist"
 [[ "$race_payload_a" != "$race_payload_b" ]] \
     || fail "raced registrations should carry distinct chain tokens"
 flag_before="$(cat "$state_dir/.@code_notify_agent_exit_sweep_scheduled" 2>/dev/null)"
@@ -3435,7 +3855,7 @@ EOF
         || fail "notifier.sh permission request should exit cleanly"
     [[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
         || fail "permission request should retain a tmux resume marker"
-    [[ "$(cat "$state_dir/@2.@code_notify_pause_fp" 2>/dev/null)" == "%3" ]] \
+    [[ "$(cat "$state_dir/@2.@code_notify_pause_fp" 2>/dev/null)" == "%3,0,"* ]] \
         || fail "permission request should defer its dialog snapshot"
     grep -q "^run-shell -b -d 2 " "$log_file" \
         || fail "permission request should schedule the 2s resume poll"
