@@ -1705,6 +1705,64 @@ rm -f "$state_dir/@2.@code_notify_dialog_ctx" \
     "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
 pass "decline clears its pause while preserving an active queued-dialog watch"
 
+# --- a late repaint must not turn every remaining tick into a history scan ---
+# #{window_activity} is a timestamp, not an edge: a single focus repaint while a
+# prompt waits pushes it past pending+1 for good, after which that gate filters
+# nothing and each of the ~450 ticks in the 900s TTL would re-serialise the
+# whole scrollback. The retained-history scan is gated on the content checksum
+# instead, which is sound because a decline row cannot reach retained history
+# without the pane painting it.
+printf '%s' "approval dialog awaiting an answer" > "$state_dir/%3.pane_content"
+printf '%s' "$agy_declined" > "$state_dir/%3.pane_history"
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_start \
+    || fail "running-start before the history-gate test should succeed"
+: > "$log_file"
+saved_agent_exit_poll="$TMUX_AGENT_EXIT_POLL_SECONDS"
+TMUX_AGENT_EXIT_POLL_SECONDS=0
+CODE_NOTIFY_TMUX_AGENT_NAME=antigravity tmux_running_pause_for_input watch \
+    || fail "watched pause before the history-gate test should succeed"
+TMUX_AGENT_EXIT_POLL_SECONDS="$saved_agent_exit_poll"
+payload=$(sed -n 's/^run-shell -b -d 2 \(.*\)$/\1/p' "$log_file" | tail -n 1)
+[[ -n "$payload" ]] || fail "the history-gate poll payload should be extractable"
+gate_pending=$(cat "$state_dir/@2.@code_notify_resume_pending")
+# The late repaint. From here on the activity gate admits every tick.
+printf '%s' "$((gate_pending + 5))" > "$state_dir/@2.window_activity"
+: > "$log_file"
+fire_poll_payload || fail "the baseline tick of the history-gate test should run cleanly"
+[[ "$(grep -c -- "capture-pane -p -S - -t %3" "$log_file")" == "1" ]] \
+    || fail "the baseline tick should scan retained history exactly once"
+# Identical pane content on the next tick: nothing can have entered history.
+: > "$log_file"
+fire_poll_payload || fail "the still tick of the history-gate test should run cleanly"
+[[ "$(grep -c -- "capture-pane -p -S - -t %3" "$log_file")" == "0" ]] \
+    || fail "a still tick must not re-serialise retained history"
+[[ "$(grep -c -- "capture-pane -p -t %3" "$log_file")" == "1" ]] \
+    || fail "a still tick must still capture visible content for the heuristic"
+[[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "a still tick must keep the pause alive"
+# The pane paints again with no new decline: the scan resumes, nothing cancels.
+printf '%s' "approval dialog awaiting an answer (4s)" > "$state_dir/%3.pane_content"
+: > "$log_file"
+fire_poll_payload || fail "the repaint tick of the history-gate test should run cleanly"
+[[ "$(grep -c -- "capture-pane -p -S - -t %3" "$log_file")" == "1" ]] \
+    || fail "a repainted tick must scan retained history again"
+[[ -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "a repaint carrying no new decline must not cancel the pause"
+# A genuine rejection still cancels: history gains a row and the pane repaints.
+printf '%s' "$agy_declined" > "$state_dir/%3.pane_content"
+printf '%s\n%s' "$agy_declined" "$agy_declined" > "$state_dir/%3.pane_history"
+export FAKE_TMUX_PANE_HEIGHT=1
+: > "$log_file"
+fire_poll_payload || fail "the rejection tick of the history-gate test should run cleanly"
+unset FAKE_TMUX_PANE_HEIGHT
+[[ ! -f "$state_dir/@2.@code_notify_resume_pending" ]] \
+    || fail "the checksum gate must not hide a genuine rejection"
+rm -f "$state_dir/@2.window_activity" "$state_dir/%3.pane_content" \
+    "$state_dir/%3.pane_history" "$state_dir/@2.@code_notify_dialog_grace" \
+    "$state_dir/.@code_notify_agent_exit_sweep_scheduled"
+tmux_running_stop || fail "cleanup after the history-gate test should succeed"
+pass "a late repaint does not make every tick rescan retained history"
+
 # --- a stale rejection poll cannot consume a same-second successor pause ---
 # Epoch seconds and a pane/count baseline can repeat across parallel asks. The
 # packed pause generation must still differ, and the locked cancel helper must

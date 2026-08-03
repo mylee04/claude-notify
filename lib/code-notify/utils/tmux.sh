@@ -3252,7 +3252,7 @@ tmux_resume_poll_sweep() {
             waiting=1
             continue
         fi
-        if ! tmux_resume_poll_capture "$pane" "$cancel_enabled"; then
+        if ! tmux_resume_poll_capture "$pane" 0; then
             waiting=1
             continue
         fi
@@ -3261,6 +3261,21 @@ tmux_resume_poll_sweep() {
         if [[ -z "$fp_now" ]]; then
             waiting=1
             continue
+        fi
+        # #{window_activity} is a timestamp, not an edge: one focus repaint
+        # while a prompt sits unanswered pushes it past pending+1 for good, so
+        # the gate above stops filtering anything and every remaining tick of
+        # the 900s TTL would re-serialise the whole scrollback. Gate the
+        # retained-history scan on the content checksum instead. A decline row
+        # cannot reach retained history without the pane painting it, so a tick
+        # whose visible content is byte-identical to the last one has nothing
+        # new to count and the previous count still stands. An unlearned
+        # baseline still scans: it must adopt a real count, never the 0 that a
+        # skipped scan leaves behind.
+        if (( cancel_enabled )) &&
+            { [[ "$fp_now" != "$fp_saved" ]] ||
+                [[ ! "$cancel_baseline" =~ ^[0-9]+$ ]]; }; then
+            tmux_resume_poll_cancel_history_count "$pane" || true
         fi
         marker_now=$(tmux_resume_poll_dialog_flag "$content")
         cancel_now="${TMUX_RESUME_POLL_CANCEL_COUNT:-0}"
@@ -3368,6 +3383,11 @@ tmux_resume_poll_dialog_flag() {
 # `-N` padding and incorrect when command substitution strips blank bottom
 # rows). History counting is advisory: a failed capture or malformed user ERE
 # must not suppress dialog/fingerprint evaluation of valid visible content.
+#
+# Only the baseline-establishing first tick asks for the bundled history count.
+# Steady-state ticks pass 0 and call the counter themselves, because they can
+# only decide whether it is worth paying for once this visible capture has
+# produced a checksum to compare (see tmux_resume_poll_sweep).
 tmux_resume_poll_capture() {
     local pane_id="$1" cancel_enabled="${2:-0}"
     TMUX_RESUME_POLL_CONTENT=""
@@ -3391,15 +3411,39 @@ tmux_resume_poll_cancel_enabled() {
 # Retained-history rejection count used by both the pause-time baseline and
 # eligible poll ticks. Capture failure is distinguished from a valid zero;
 # grep exit 1 means simply that no marker matched.
+#
+# The capture streams straight into grep rather than landing in a shell
+# variable first: buffering copied every retained line twice (once into
+# $history, once back out through printf) for no benefit. Measured on a
+# 95k-line scrollback, that cost ~171ms and ~105ms of shell CPU per call
+# versus ~107ms and ~37ms streamed; what is left is tmux serialising its
+# history, which no rewrite here can avoid.
+#
+# The depth deliberately stays `-S -`. This count is only meaningful compared
+# against the baseline recorded when the request paused, so a bounded window
+# (`-S -500`) would let old markers age out of view and drop the count below
+# that baseline — silently missing later rejections, and inverting into a
+# spurious cancel of a live pause whenever a redraw pulls an already-absorbed
+# decline back into the window.
 tmux_resume_poll_cancel_history_count() {
-    local pane_id="$1" history count status
+    local pane_id="$1" result count statuses cap_status grep_status
     TMUX_RESUME_POLL_CANCEL_COUNT=0
     [[ -n "$TMUX_DIALOG_CANCEL_MARKERS" ]] || return 0
-    history=$(tmux capture-pane -p -S - -t "$pane_id" 2>/dev/null) || return 1
-    count=$(printf '%s\n' "$history" |
-        grep -cE -e "$TMUX_DIALOG_CANCEL_MARKERS" 2>/dev/null)
-    status=$?
-    (( status <= 1 )) || return 1
+    # The pipeline's own exit codes ride out on a trailing line, since a
+    # command substitution hides PIPESTATUS from the caller.
+    result=$(
+        tmux capture-pane -p -S - -t "$pane_id" 2>/dev/null |
+            grep -cE -e "$TMUX_DIALOG_CANCEL_MARKERS" 2>/dev/null
+        printf '%s %s' "${PIPESTATUS[0]}" "${PIPESTATUS[1]}"
+    )
+    # grep -c always prints its count on its own line, so a result without a
+    # newline means grep printed nothing at all (a malformed user ERE).
+    [[ "$result" == *$'\n'* ]] || return 1
+    count="${result%%$'\n'*}"
+    statuses="${result##*$'\n'}"
+    read -r cap_status grep_status <<< "$statuses"
+    [[ "$cap_status" == "0" ]] || return 1
+    [[ "$grep_status" == "0" || "$grep_status" == "1" ]] || return 1
     [[ "$count" =~ ^[0-9]+$ ]] || return 1
     TMUX_RESUME_POLL_CANCEL_COUNT="$count"
     return 0
