@@ -1129,6 +1129,17 @@ show_available_alert_types() {
     echo "Aliases like ${CYAN}subagent_stop${RESET}, ${CYAN}teammate-idle${RESET}, and ${CYAN}task_completed${RESET} are accepted."
 }
 
+# Rewrite enabled Claude hooks after an alert-type change. The previous matcher
+# no longer passes is_enabled_globally(), so detect the stable managed Stop hook
+# instead.
+apply_alert_types_to_enabled_hooks() {
+    if ! has_managed_global_claude_hooks; then
+        return 2
+    fi
+
+    enable_hooks_in_settings
+}
+
 # Add an alert type
 add_alert_type() {
     local type
@@ -1141,20 +1152,31 @@ add_alert_type() {
         return 1
     fi
 
+    local already_enabled=0
     if is_notify_type_enabled "$type"; then
+        already_enabled=1
+    else
+        add_notify_type "$type"
+    fi
+
+    local applied=0 apply_result=0
+    apply_alert_types_to_enabled_hooks || apply_result=$?
+    if [[ $apply_result -eq 0 ]]; then
+        applied=1
+    elif [[ $apply_result -ne 2 ]]; then
+        error "Failed to apply alert types to enabled Claude hooks"
+        return 1
+    fi
+
+    if [[ $already_enabled -eq 1 ]]; then
         warning "$type is already enabled"
-        return 0
+    else
+        success "Added: $type"
     fi
 
-    add_notify_type "$type"
-
-    # For ask_user: register PreToolUse hook immediately
-    if [[ "$type" == "ask_user" ]] && is_tool_enabled "claude"; then
-        register_ask_user_hook "$GLOBAL_SETTINGS_FILE" "$(get_global_claude_pre_tool_use_command)"
-    fi
-
-    success "Added: $type"
-    if [[ "$type" != "ask_user" ]]; then
+    if [[ $applied -eq 1 ]]; then
+        info "Applied to enabled Claude hooks"
+    elif [[ "$type" != "ask_user" ]]; then
         echo ""
         info "Run ${CYAN}cn on${RESET} to apply changes"
     fi
@@ -1172,20 +1194,30 @@ remove_alert_type() {
         return 1
     fi
 
-    if ! is_notify_type_enabled "$type"; then
+    local was_enabled=0
+    if is_notify_type_enabled "$type"; then
+        was_enabled=1
+        remove_notify_type "$type"
+    fi
+
+    local applied=0 apply_result=0
+    apply_alert_types_to_enabled_hooks || apply_result=$?
+    if [[ $apply_result -eq 0 ]]; then
+        applied=1
+    elif [[ $apply_result -ne 2 ]]; then
+        error "Failed to apply alert types to enabled Claude hooks"
+        return 1
+    fi
+
+    if [[ $was_enabled -eq 0 ]]; then
         warning "$type is not currently enabled"
-        return 0
+    else
+        success "Removed: $type"
     fi
 
-    remove_notify_type "$type"
-
-    # For ask_user: unregister PreToolUse hook immediately
-    if [[ "$type" == "ask_user" ]] && is_tool_enabled "claude"; then
-        unregister_ask_user_hook "$GLOBAL_SETTINGS_FILE" "$(get_global_claude_pre_tool_use_command)"
-    fi
-
-    success "Removed: $type"
-    if [[ "$type" != "ask_user" ]]; then
+    if [[ $applied -eq 1 ]]; then
+        info "Applied to enabled Claude hooks"
+    elif [[ "$type" != "ask_user" ]]; then
         echo ""
         info "Run ${CYAN}cn on${RESET} to apply changes"
     fi
@@ -1195,8 +1227,17 @@ remove_alert_type() {
 reset_alert_types() {
     reset_notify_types
     success "Reset to default: idle_prompt"
-    echo ""
-    info "Run ${CYAN}cn on${RESET} to apply changes"
+    local apply_result=0
+    apply_alert_types_to_enabled_hooks || apply_result=$?
+    if [[ $apply_result -eq 0 ]]; then
+        info "Applied to enabled Claude hooks"
+    elif [[ $apply_result -ne 2 ]]; then
+        error "Failed to apply alert types to enabled Claude hooks"
+        return 1
+    else
+        echo ""
+        info "Run ${CYAN}cn on${RESET} to apply changes"
+    fi
 }
 
 # Show alerts help
