@@ -331,6 +331,15 @@ else
     test_fail "tmux window badge failed"
 fi
 
+# Test: a stop silenced only by the (process-wide) stop rate limit still badges
+# its window, while hard suppressors withhold the badge along with the alert
+test_start "stop rate-limit badge"
+if run_test_script tests/test-stop-rate-limit-badge.sh; then
+    test_pass
+else
+    test_fail "stop rate-limit badge failed"
+fi
+
 # Test 19: click-through commands persist mappings and drive notifier activation
 test_start "click-through commands"
 if run_test_script tests/test-click-through.sh; then

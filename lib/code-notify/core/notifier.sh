@@ -1637,8 +1637,16 @@ is_codex_desktop_trigger() {
     return 1
 }
 
+# Set when the only thing suppressing a stop is the stop rate limit, so the
+# call site can still deliver that window's tmux badge. Every other suppressor
+# is a hard one and leaves this at 0.
+# shellcheck disable=SC2034  # read at the suppression call site below
+STOP_RATE_LIMIT_BADGE_ONLY=0
+
 # Function to check if notification should be suppressed
 should_suppress_notification() {
+    STOP_RATE_LIMIT_BADGE_ONLY=0
+
     # Check kill switch first - instant disable without restart
     if [[ -f "$HOME/.claude/notifications/disabled" ]] && ! is_project_scoped_notification; then
         return 0  # Suppress notification
@@ -1658,16 +1666,6 @@ should_suppress_notification() {
     # Suppress only when this Codex event originated from the desktop app.
     if is_codex_desktop_trigger; then
         return 0
-    fi
-
-    # Rate limit stop notifications to prevent spam from parallel sub-agents.
-    # Badge-only runs are exempt: they never toast, and the completion that
-    # preceded them stamped this very key — limiting here would silently drop
-    # the badge reconcile they exist to deliver.
-    if [[ "$HOOK_TYPE" == "stop" ]] && [[ "${CODE_NOTIFY_BADGE_ONLY:-}" != "1" ]]; then
-        if is_rate_limited "last_stop_notification" "$STOP_RATE_LIMIT_SECONDS"; then
-            return 0  # Suppress - too soon since last notification
-        fi
     fi
 
     # Suppress repeated state-style notifications such as idle_prompt.
@@ -1701,6 +1699,23 @@ should_suppress_notification() {
     if [[ -n "$HOOK_DATA" ]]; then
         if echo "$HOOK_DATA" | grep -q '"autoAccepted":\s*true' 2>/dev/null; then
             return 0
+        fi
+    fi
+
+    # Rate limit stop notifications to prevent spam from parallel sub-agents.
+    # Deliberately the last check: every suppressor above is a hard one that
+    # must withhold the tmux badge too, while this one only silences the alert —
+    # the call site turns it into a badge-only run. Ordering it last is what
+    # makes "returned here" mean "nothing else objected", so a stop_hook_active
+    # or auto-accepted stop cannot slip through as a badge.
+    #
+    # Badge-only runs are exempt entirely: they never toast, and the completion
+    # that preceded them stamped this very key — limiting here would silently
+    # drop the badge reconcile they exist to deliver.
+    if [[ "$HOOK_TYPE" == "stop" ]] && [[ "${CODE_NOTIFY_BADGE_ONLY:-}" != "1" ]]; then
+        if is_rate_limited "last_stop_notification" "$STOP_RATE_LIMIT_SECONDS"; then
+            STOP_RATE_LIMIT_BADGE_ONLY=1
+            return 0  # Suppress the alert - too soon since last notification
         fi
     fi
 
@@ -1929,7 +1944,28 @@ fi
 # notifications and must honour an explicit request for quiet.
 if [[ "$HOOK_TYPE" == "stop" ]] || [[ "$HOOK_TYPE" == "notification" ]] || [[ "$HOOK_TYPE" == "error" ]] || [[ "$HOOK_TYPE" == "StopFailure" ]] || [[ "$HOOK_TYPE" == "PreToolUse" ]] || is_claude_event_hook; then
     if should_suppress_notification; then
-        exit 0
+        # A stop silenced only by the rate limit still earns its tmux badge.
+        # The limit exists to keep parallel sub-agents from spamming toasts, but
+        # the badge is per-window, silent and idempotent, so it cannot spam —
+        # and exiting here left the window with no indicator at all, because the
+        # running-marker teardown above already ran (it deliberately precedes
+        # this check, so the spinner is already down). Worse, the key is a
+        # single process-wide file, not scoped by agent/project/window, so any
+        # agent finishing anywhere could blank an unrelated window's badge and
+        # leave a completed turn looking untouched.
+        #
+        # Downgrade to a badge-only run instead of exiting: it takes the normal
+        # path as far as the badge and stops there (see the badge-only exit
+        # below), so no toast, sound, voice or channel delivery follows. It also
+        # leaves the rate-limit key unstamped and writes no notifications.log
+        # line (both are guarded on CODE_NOTIFY_BADGE_ONLY), so the next
+        # completion still alerts on time rather than being pushed out by a stop
+        # that never made a sound.
+        if [[ "$STOP_RATE_LIMIT_BADGE_ONLY" == "1" ]]; then
+            CODE_NOTIFY_BADGE_ONLY=1
+        else
+            exit 0
+        fi
     fi
 fi
 
