@@ -519,6 +519,46 @@ is_enabled_globally() {
     [[ -f "$GLOBAL_HOOKS_FILE" ]]
 }
 
+# Check for an installed Code-Notify Claude hook without requiring its
+# Notification matcher to match the current alert-type configuration. This is
+# used when alert types change, because the matcher is stale until it is
+# rewritten.
+has_managed_global_claude_hooks() {
+    local file="${1:-$GLOBAL_SETTINGS_FILE}"
+    local stop_cmd
+    stop_cmd="$(get_global_claude_stop_command)"
+
+    if [[ -f "$file" ]]; then
+        if has_jq; then
+            jq -e --arg cmd "$stop_cmd" '
+                any(.hooks.Stop[]?.hooks[]?;
+                    (.type // "") == "command" and (.command // "") == $cmd
+                )
+            ' "$file" >/dev/null 2>&1 && return 0
+        elif has_python3; then
+            python3 - "$file" "$stop_cmd" <<'PYTHON' >/dev/null 2>&1 && return 0
+import json
+import sys
+
+file_path, stop_cmd = sys.argv[1:3]
+with open(file_path, "r") as fh:
+    settings = json.load(fh)
+
+for entry in settings.get("hooks", {}).get("Stop", []):
+    for hook in entry.get("hooks", []):
+        if hook.get("type") == "command" and hook.get("command") == stop_cmd:
+            raise SystemExit(0)
+
+raise SystemExit(1)
+PYTHON
+        else
+            grep -qF "\"command\": \"$stop_cmd\"" "$file" && return 0
+        fi
+    fi
+
+    [[ -f "$GLOBAL_HOOKS_FILE" ]]
+}
+
 # Check if notifications are enabled for current project
 is_enabled_project() {
     local project_root=$(get_project_root 2>/dev/null || echo "$PWD")

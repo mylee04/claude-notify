@@ -243,9 +243,9 @@ cn alerts reset                    # Back to default (idle_prompt only)
 | `TaskCreated`        | Claude agent-team task was created             |
 | `TaskCompleted`      | Claude agent-team task completed               |
 
-Alert-type matching applies to Claude Code notification hooks and Gemini CLI notification hooks. `ask_user` is a Claude-only `PreToolUse` hook for `AskUserQuestion`; it is applied immediately when Claude notifications are already enabled. Claude Code agent/team events are separate hook events and are opt-in via `cn alerts add SubagentStop`, `cn alerts add TeammateIdle`, or `cn alerts add TaskCompleted`.
+Alert-type matching applies to Claude Code notification hooks and Gemini CLI notification hooks. Changes are applied immediately when Claude notifications are already enabled; otherwise, run `cn on` after choosing the alert types. `ask_user` is a Claude-only `PreToolUse` hook for `AskUserQuestion`. Claude Code agent/team events are separate hook events and are opt-in via `cn alerts add SubagentStop`, `cn alerts add TeammateIdle`, or `cn alerts add TaskCompleted`.
 
-Agent-team and subagent workflows can be noisy if `permission_prompt` is enabled. If you only want idle pings, run `cn alerts remove permission_prompt && cn on`. Codex currently uses completion events from `notify`, so `permission_prompt` and `idle_prompt` settings do not change Codex behavior.
+Agent-team and subagent workflows can be noisy if `permission_prompt` is enabled. If you only want idle pings, run `cn alerts remove permission_prompt`. Codex currently uses completion events from `notify`, so `permission_prompt` and `idle_prompt` settings do not change Codex behavior.
 
 ### Slack And Discord
 
