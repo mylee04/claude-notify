@@ -85,6 +85,53 @@ with sqlite3.connect(db_path) as conn:
 PY
 }
 
+write_t3_thread_metadata() {
+    local codex_thread_id="$1"
+    local title="$2"
+
+    python3 - "$HOME/.t3/userdata/state.sqlite" "$codex_thread_id" "$title" <<'PY'
+import json
+import pathlib
+import sqlite3
+import sys
+
+db_path = pathlib.Path(sys.argv[1])
+codex_thread_id = sys.argv[2]
+title = sys.argv[3]
+db_path.parent.mkdir(parents=True, exist_ok=True)
+
+with sqlite3.connect(db_path) as conn:
+    conn.execute(
+        "create table projection_threads (thread_id text primary key, title text not null)"
+    )
+    conn.execute(
+        """
+        create table provider_session_runtime (
+            thread_id text primary key,
+            provider_name text not null,
+            resume_cursor_json text
+        )
+        """
+    )
+    conn.execute(
+        "insert into projection_threads values (?, ?)",
+        ("malformed-runtime", "Wrong thread"),
+    )
+    conn.execute(
+        "insert into provider_session_runtime values (?, ?, ?)",
+        ("malformed-runtime", "codex", "not-json"),
+    )
+    conn.execute(
+        "insert into projection_threads values (?, ?)",
+        ("matching-runtime", title),
+    )
+    conn.execute(
+        "insert into provider_session_runtime values (?, ?, ?)",
+        ("matching-runtime", "codex", json.dumps({"threadId": codex_thread_id})),
+    )
+PY
+}
+
 test_dir="$(mktemp -d)"
 trap 'rm -rf "$test_dir"' EXIT
 
@@ -143,14 +190,18 @@ run_codex_notifier "$fake_path" '{"type":"agent-turn-complete","thread-id":"desk
 write_codex_thread_metadata "cli-thread" "Codex CLI" "shell"
 run_codex_notifier "$fake_path" '{"type":"agent-turn-complete","thread-id":"cli-thread","cwd":"/tmp/demo","client":"codex-exec","last-assistant-message":"CLI event still notifies"}'
 
-wait_for_lines "$notification_log" 3 || fail "expected three Codex notification deliveries"
-wait_for_lines "$sound_log" 3 || fail "expected three Codex sound playbacks"
-wait_for_lines "$HOME/.claude/logs/notifications.log" 3 || fail "expected three Codex notification log entries"
+write_t3_thread_metadata "t3-codex-thread" "Investigate missing desktop notifications"
+run_codex_notifier "$fake_path" '{"type":"agent-turn-complete","thread-id":"t3-codex-thread","cwd":"/tmp/demo","client":"codex-exec","last-assistant-message":"T3 event"}'
+
+wait_for_lines "$notification_log" 4 || fail "expected four Codex notification deliveries"
+wait_for_lines "$sound_log" 4 || fail "expected four Codex sound playbacks"
+wait_for_lines "$HOME/.claude/logs/notifications.log" 4 || fail "expected four Codex notification log entries"
 
 grep -q "Task Complete - demo" "$notification_log" || fail "Codex completion payload did not map to a stop notification"
 grep -q "Input Required - demo" "$notification_log" || fail "Codex permission-like payload did not map to an input-required notification"
-[[ $(wc -l < "$notification_log") -eq 3 ]] || fail "desktop-origin Codex events were not suppressed correctly"
-[[ $(wc -l < "$sound_log") -eq 3 ]] || fail "desktop-origin Codex sound playback was not suppressed correctly"
-[[ $(wc -l < "$HOME/.claude/logs/notifications.log") -eq 3 ]] || fail "desktop-origin Codex log entries were not suppressed correctly"
+grep -q "Task Complete - Investigate missing desktop notifications" "$notification_log" || fail "T3 thread title was not used as Codex notification context"
+[[ $(wc -l < "$notification_log") -eq 4 ]] || fail "desktop-origin Codex events were not suppressed correctly"
+[[ $(wc -l < "$sound_log") -eq 4 ]] || fail "desktop-origin Codex sound playback was not suppressed correctly"
+[[ $(wc -l < "$HOME/.claude/logs/notifications.log") -eq 4 ]] || fail "desktop-origin Codex log entries were not suppressed correctly"
 
-pass "Codex notifies for CLI sessions while suppressing desktop-origin duplicate events"
+pass "Codex resolves T3 titles while preserving CLI fallback and desktop suppression"
