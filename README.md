@@ -8,21 +8,20 @@
 
 Desktop notifications for AI coding tools - get alerts when tasks complete or input is needed.
 
-## Latest: Oh My Pi (omp) Support
+## Latest: T3 Code Thread Titles
 
-Code-Notify now supports [Oh My Pi](https://www.npmjs.com/package/@oh-my-pi/pi-coding-agent) (`omp`) alongside Claude Code, Codex, and Gemini CLI.
+On macOS, Code-Notify now shows the matching T3 Code thread title in Codex completion notifications instead of a generic workspace name.
 
-- **Enable omp notifications**: `cn on omp`
-- **Disable omp notifications**: `cn off omp`
-- **Check status**: `cn status`
-- **Delivery options**: desktop notification, voice, sound, Slack, Discord, and macOS click-through
+- **Automatic matching**: Uses the Codex `thread-id` to find the corresponding T3 Code thread
+- **Safe fallback**: Uses the workspace name when T3 Code is unavailable or no matching thread exists
+- **No extra setup**: Existing `cn on codex` configurations pick up the feature after updating
+- **macOS scoped**: Linux, WSL, and native Windows notification behavior is unchanged
 
-omp uses a managed extension at `~/.omp/agent/extensions/code-notify.js` and forwards completion events into the existing Code-Notify notifier.
+Update and verify the installed version:
 
 ```bash
-cn on omp
-cn test omp
-cn status
+cn update
+code-notify version
 ```
 
 Usage reset alerts are still available for Codex and Claude: `cn usage setup --watch`.
@@ -36,7 +35,7 @@ Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@mai
   <img src="assets/multi-tools-support-02.png" width="48%" alt="All tools enabled"/>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.11.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
+[![Version](https://img.shields.io/badge/version-1.12.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-supported-green.svg)](https://www.apple.com/macos)
 [![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
@@ -44,11 +43,12 @@ Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@mai
 
 ---
 
-## What's New in v1.11.0
+## What's New in v1.12.0
 
-- **Oh My Pi support**: `cn on omp`, `cn off omp`, and `cn status` now work for the `omp` CLI
-- **Managed omp extension**: Code-Notify writes `~/.omp/agent/extensions/code-notify.js` and preserves user-owned files
-- **Shared delivery pipeline**: omp completion notifications reuse sound, voice, Slack/Discord, click-through, mute, and rate limiting
+- **T3 Code context on macOS**: Codex completion notifications use the matching T3 Code thread title
+- **Resilient local lookup**: Missing, malformed, or non-object T3 state entries are ignored without interrupting notifications
+- **Safe notification text**: Quoted thread titles are passed to AppleScript without breaking delivery
+- **Workspace fallback**: Existing Codex notification context remains available when no T3 Code title can be resolved
 
 ---
 
