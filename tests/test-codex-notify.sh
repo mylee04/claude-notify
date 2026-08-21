@@ -123,6 +123,14 @@ with sqlite3.connect(db_path) as conn:
     )
     conn.execute(
         "insert into projection_threads values (?, ?)",
+        ("non-object-runtime", "Wrong thread"),
+    )
+    conn.execute(
+        "insert into provider_session_runtime values (?, ?, ?)",
+        ("non-object-runtime", "codex", json.dumps([])),
+    )
+    conn.execute(
+        "insert into projection_threads values (?, ?)",
         ("matching-runtime", title),
     )
     conn.execute(
@@ -190,7 +198,7 @@ run_codex_notifier "$fake_path" '{"type":"agent-turn-complete","thread-id":"desk
 write_codex_thread_metadata "cli-thread" "Codex CLI" "shell"
 run_codex_notifier "$fake_path" '{"type":"agent-turn-complete","thread-id":"cli-thread","cwd":"/tmp/demo","client":"codex-exec","last-assistant-message":"CLI event still notifies"}'
 
-write_t3_thread_metadata "t3-codex-thread" "Investigate missing desktop notifications"
+write_t3_thread_metadata "t3-codex-thread" 'Investigate "missing" desktop notifications'
 run_codex_notifier "$fake_path" '{"type":"agent-turn-complete","thread-id":"t3-codex-thread","cwd":"/tmp/demo","client":"codex-exec","last-assistant-message":"T3 event"}'
 
 wait_for_lines "$notification_log" 4 || fail "expected four Codex notification deliveries"
@@ -199,9 +207,24 @@ wait_for_lines "$HOME/.claude/logs/notifications.log" 4 || fail "expected four C
 
 grep -q "Task Complete - demo" "$notification_log" || fail "Codex completion payload did not map to a stop notification"
 grep -q "Input Required - demo" "$notification_log" || fail "Codex permission-like payload did not map to an input-required notification"
-grep -q "Task Complete - Investigate missing desktop notifications" "$notification_log" || fail "T3 thread title was not used as Codex notification context"
+grep -Fq 'Task Complete - Investigate "missing" desktop notifications' "$notification_log" || fail "T3 thread title was not used as Codex notification context"
 [[ $(wc -l < "$notification_log") -eq 4 ]] || fail "desktop-origin Codex events were not suppressed correctly"
 [[ $(wc -l < "$sound_log") -eq 4 ]] || fail "desktop-origin Codex sound playback was not suppressed correctly"
 [[ $(wc -l < "$HOME/.claude/logs/notifications.log") -eq 4 ]] || fail "desktop-origin Codex log entries were not suppressed correctly"
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    osascript_log="$log_dir/osascript.log"
+    rm "$fake_bin/terminal-notifier"
+    cat > "$fake_bin/osascript" <<EOF
+#!/bin/bash
+printf '%s\n' "\$@" > "$osascript_log"
+EOF
+    chmod +x "$fake_bin/osascript"
+
+    run_codex_notifier "$fake_path" '{"type":"agent-turn-complete","thread-id":"t3-codex-thread","cwd":"/tmp/demo","client":"codex-exec","last-assistant-message":"T3 fallback event"}'
+
+    wait_for_lines "$osascript_log" 4 || fail "osascript fallback did not receive notification arguments"
+    grep -Fqx 'Task Complete - Investigate "missing" desktop notifications' "$osascript_log" || fail "osascript fallback did not preserve quotes in the T3 thread title"
+fi
 
 pass "Codex resolves T3 titles while preserving CLI fallback and desktop suppression"

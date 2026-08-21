@@ -148,6 +148,9 @@ try:
             except (TypeError, json.JSONDecodeError):
                 continue
 
+            if not isinstance(resume_cursor, dict):
+                continue
+
             if resume_cursor.get("threadId") == codex_thread_id and isinstance(title, str):
                 title = " ".join(title.split())
                 if title:
@@ -614,7 +617,11 @@ send_macos_notification() {
     else
         # osascript doesn't support click-to-activate, but we can use a workaround.
         # Keep this silent too so custom/default sound playback stays single-sourced.
-        osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\" subtitle \"$SUBTITLE\"" 2>/dev/null
+        osascript - "$MESSAGE" "$TITLE" "$SUBTITLE" <<'APPLESCRIPT' 2>/dev/null
+on run argv
+    display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)
+end run
+APPLESCRIPT
     fi
 }
 

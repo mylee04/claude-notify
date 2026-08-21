@@ -181,7 +181,7 @@ Code-Notify uses the hook systems built into AI coding tools:
 
 For Codex, Code-Notify configures `notify = ["/absolute/path/to/notifier.sh", "codex"]` and reads the JSON payload Codex appends on completion.
 Codex currently exposes completion events through `notify`; approval and `request_permissions` prompts do not currently arrive through this hook.
-When a Codex session runs through T3 Code, Code-Notify uses the payload's `thread-id` to resolve the matching title from T3 Code's local state. If T3 Code is unavailable or no matching thread exists, it falls back to the workspace name.
+On macOS, when a Codex session runs through T3 Code, Code-Notify uses the payload's `thread-id` to resolve the matching title from T3 Code's local state. If T3 Code is unavailable or no matching thread exists, it falls back to the workspace name.
 
 For omp, Code-Notify writes a small managed extension module to `~/.omp/agent/extensions/code-notify.js`, because omp loads extension modules instead of reading hook commands from a config file. The extension forwards omp's `agent_end` event to the same `notifier.sh`, so sound, voice, Slack/Discord channels, click-through, the global mute switch, and rate limiting all work unchanged. Like Codex, omp currently exposes completion events; approval and idle prompts are not yet wired.
 
