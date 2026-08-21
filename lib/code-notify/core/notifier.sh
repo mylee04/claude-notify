@@ -94,7 +94,17 @@ get_codex_hook_type() {
 }
 
 get_codex_project_name() {
-    local payload_cwd
+    local payload_cwd thread_id t3_thread_title
+    thread_id=$(json_extract_string "$HOOK_DATA" "thread-id")
+
+    if [[ -n "$thread_id" ]]; then
+        t3_thread_title=$(get_t3_thread_title "$thread_id")
+        if [[ -n "$t3_thread_title" ]]; then
+            printf '%s\n' "$t3_thread_title"
+            return 0
+        fi
+    fi
+
     payload_cwd=$(json_extract_string "$HOOK_DATA" "cwd")
 
     if [[ -n "$payload_cwd" ]]; then
@@ -102,6 +112,53 @@ get_codex_project_name() {
     else
         basename "$PWD"
     fi
+}
+
+# Resolve a Codex thread to its T3 Code title when T3 local state is available.
+get_t3_thread_title() {
+    local thread_id="$1"
+    local state_db="$HOME/.t3/userdata/state.sqlite"
+
+    [[ -n "$thread_id" ]] || return 1
+    [[ -f "$state_db" ]] || return 1
+    has_python3 || return 1
+
+    python3 - "$state_db" "$thread_id" <<'PY' 2>/dev/null
+import json
+import pathlib
+import sqlite3
+import sys
+
+db_path = pathlib.Path(sys.argv[1])
+codex_thread_id = sys.argv[2]
+
+try:
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1) as conn:
+        rows = conn.execute(
+            """
+            select t.title, r.resume_cursor_json
+            from provider_session_runtime r
+            join projection_threads t using (thread_id)
+            where r.provider_name = 'codex'
+            """
+        )
+        for title, resume_cursor_json in rows:
+            try:
+                resume_cursor = json.loads(resume_cursor_json or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+
+            if not isinstance(resume_cursor, dict):
+                continue
+
+            if resume_cursor.get("threadId") == codex_thread_id and isinstance(title, str):
+                title = " ".join(title.split())
+                if title:
+                    print(title, end="")
+                    break
+except (OSError, sqlite3.Error):
+    pass
+PY
 }
 
 HOOK_DATA=""
@@ -560,7 +617,11 @@ send_macos_notification() {
     else
         # osascript doesn't support click-to-activate, but we can use a workaround.
         # Keep this silent too so custom/default sound playback stays single-sourced.
-        osascript -e "display notification \"$MESSAGE\" with title \"$TITLE\" subtitle \"$SUBTITLE\"" 2>/dev/null
+        osascript - "$MESSAGE" "$TITLE" "$SUBTITLE" <<'APPLESCRIPT' 2>/dev/null
+on run argv
+    display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)
+end run
+APPLESCRIPT
     fi
 }
 
