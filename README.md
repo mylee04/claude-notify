@@ -24,7 +24,7 @@ cn update
 code-notify version
 ```
 
-Usage reset alerts are still available for Codex and Claude: `cn usage setup --watch`.
+Usage reset alerts and advance reminders are available for Codex and Claude: `cn usage setup --watch`.
 
 Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-daily-limit-reset.m4a) · [Weekly reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-weekly-limit-reset.m4a)
 
@@ -270,20 +270,29 @@ cn usage setup --watch
 cn usage status
 ```
 
-That enables usage alerts, sets the default 20% and 10% warning thresholds, enables distinct reset voice/sound, and starts a background watcher.
+That enables usage alerts, sets the default 20% and 10% warning thresholds, schedules reset reminders at 48h, 24h, 12h, 6h, 2h, and 30m, enables distinct reset voice/sound, and starts a background watcher.
 
 Manual setup:
 
 ```bash
 cn usage on                         # Enable usage alerts
 cn usage thresholds set 20,10       # Warn at 20% and 10% remaining
+cn usage reset-reminders set 48,24,12,6,2,0.5
 cn usage reset-alerts voice on      # Speak reset alerts
 cn usage reset-alerts sound default # Use the reset sound
 cn usage check                      # Run one check now
 cn usage watch start --interval 300 # Keep watching in the background
 ```
 
-Code-Notify checks the daily (5h) and weekly (7d) usage windows. It sends a warning when remaining usage crosses 20% or 10%, and sends a reset notification when a window returns to 100%.
+Code-Notify checks the daily (5h) and weekly (7d) usage windows. It sends a warning when remaining usage crosses 20% or 10%, advance reminders while unused quota is approaching its reset, and a reset notification when a window returns to 100%. Weekly windows use all default reminder stages; 5h windows use the 2h and 30m stages.
+
+Each reminder is sent once per reset cycle. If the watcher was stopped while several stages passed, Code-Notify sends only the most urgent catch-up reminder instead of a burst. Customize or disable the schedule with:
+
+```bash
+cn usage reset-reminders set 24,6,1
+cn usage reset-reminders off
+cn usage reset-reminders reset
+```
 
 `cn usage check` runs once and exits. `cn usage watch start` keeps watching in the background on macOS/Linux. Use `cn usage watch stop` to stop it.
 
@@ -302,7 +311,7 @@ cn usage reset-alerts voice off
 cn usage reset-alerts sound set ~/sounds/tokens-reset.wav
 ```
 
-Send reset alerts to Slack or Discord too:
+Send warnings, advance reminders, and reset alerts to Slack or Discord too:
 
 ```bash
 cn channels add slack https://hooks.slack.com/services/...

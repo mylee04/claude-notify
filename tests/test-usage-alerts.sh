@@ -48,23 +48,34 @@ cat > "$fake_bin/curl" <<EOF
 #!/bin/bash
 last_arg="\${@: -1}"
 if [[ "\$last_arg" == *"wham/usage"* ]]; then
-    count=\$(cat "$quota_count")
-    count=\$((count + 1))
-    printf '%s' "\$count" > "$quota_count"
-    case "\$count" in
-        1) used=5 ;;
-        2) used=80 ;;
-        3) used=91 ;;
-        4) used=91 ;;
-        5) used=70 ;;
-        6) used=91 ;;
-        7) used=50 ;;
-        8) used=0 ;;
-        9) used=0 ;;
-        10) used=10 ;;
-        *) used=0 ;;
-    esac
-    printf '{"rate_limit":{"primary_window":{"used_percent":%s,"reset_at":1900000000},"secondary_window":{"used_percent":50,"reset_at":1900000000}}}' "\$used"
+    if [[ -n "\${CODE_NOTIFY_TEST_RESET_AT:-}" ]]; then
+        used="\${CODE_NOTIFY_TEST_PRIMARY_USED:-50}"
+        secondary_used="\${CODE_NOTIFY_TEST_SECONDARY_USED:-50}"
+        primary_reset_at="\${CODE_NOTIFY_TEST_PRIMARY_RESET_AT:-\$CODE_NOTIFY_TEST_RESET_AT}"
+        secondary_reset_at="\$CODE_NOTIFY_TEST_RESET_AT"
+    else
+        count=\$(cat "$quota_count")
+        count=\$((count + 1))
+        printf '%s' "\$count" > "$quota_count"
+        case "\$count" in
+            1) used=5 ;;
+            2) used=80 ;;
+            3) used=91 ;;
+            4) used=91 ;;
+            5) used=70 ;;
+            6) used=91 ;;
+            7) used=50 ;;
+            8) used=0 ;;
+            9) used=0 ;;
+            10) used=10 ;;
+            *) used=0 ;;
+        esac
+        secondary_used=50
+        primary_reset_at=1900000000
+        secondary_reset_at=1900000000
+    fi
+    printf '{"rate_limit":{"primary_window":{"used_percent":%s,"reset_at":%s},"secondary_window":{"used_percent":%s,"reset_at":%s}}}' \
+        "\$used" "\$primary_reset_at" "\$secondary_used" "\$secondary_reset_at"
     exit 0
 fi
 printf '%s\n' "\$*" >> "$curl_log"
@@ -143,6 +154,65 @@ PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
 disabled_reset_status=$(PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" "$ROOT_DIR/bin/code-notify" usage status)
 printf '%s' "$disabled_reset_status" | grep -q "Reset alerts: .*DISABLED" || fail "reset alerts should be optional"
 
+reminder_home="$test_dir/reminder-home"
+mkdir -p "$reminder_home/.codex"
+printf '{"tokens":{"access_token":"codex-token"}}' > "$reminder_home/.codex/auth.json"
+PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$reminder_home" \
+    "$ROOT_DIR/bin/code-notify" usage setup codex >/dev/null
+
+reminder_reset_at=2000169200
+reminder_primary_reset_at=2000014400
+reminder_now=2000000000
+
+run_reminder_check() {
+    PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        HOME="$reminder_home" \
+        CODE_NOTIFY_USAGE_NOW_EPOCH="$reminder_now" \
+        CODE_NOTIFY_TEST_PRIMARY_RESET_AT="$reminder_primary_reset_at" \
+        CODE_NOTIFY_TEST_RESET_AT="$reminder_reset_at" \
+        CODE_NOTIFY_TEST_PRIMARY_USED="${reminder_primary_used:-50}" \
+        CODE_NOTIFY_TEST_SECONDARY_USED="${reminder_secondary_used:-24}" \
+        "$ROOT_DIR/bin/code-notify" usage check codex >/dev/null
+}
+
+: > "$notify_log"
+run_reminder_check
+grep -q "weekly (7d) resets in under 48 hours. 76% remains" "$notify_log" || fail "48 hour reset reminder missing"
+reminder_count=$(wc -l < "$notify_log")
+[[ "$reminder_count" -eq 1 ]] || fail "5h window should not emit long-horizon reset reminders"
+
+run_reminder_check
+same_reminder_count=$(wc -l < "$notify_log")
+[[ "$same_reminder_count" -eq "$reminder_count" ]] || fail "same reset reminder should not duplicate"
+
+reminder_now=$((reminder_reset_at - 23 * 3600))
+run_reminder_check
+grep -q "weekly (7d) resets in under 24 hours" "$notify_log" || fail "24 hour reset reminder missing"
+
+reminder_now=$((reminder_reset_at - 5 * 3600))
+before_late_count=$(wc -l < "$notify_log")
+run_reminder_check
+after_late_count=$(wc -l < "$notify_log")
+[[ "$after_late_count" -eq $((before_late_count + 1)) ]] || fail "late watcher should emit only one catch-up reminder"
+grep -q "weekly (7d) resets in under 6 hours" "$notify_log" || fail "late watcher should choose the most urgent reminder"
+
+reminder_now=$((reminder_reset_at - 20 * 60))
+run_reminder_check
+grep -q "weekly (7d) resets in under 30 minutes" "$notify_log" || fail "30 minute reset reminder missing"
+
+: > "$notify_log"
+PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$reminder_home" \
+    "$ROOT_DIR/bin/code-notify" usage reset-state >/dev/null
+reminder_primary_used=0
+reminder_secondary_used=0
+run_reminder_check
+[[ ! -s "$notify_log" ]] || fail "full quota should not emit a reset reminder"
+
+PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$reminder_home" \
+    "$ROOT_DIR/bin/code-notify" usage reset-reminders off >/dev/null
+reminder_status=$(PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$reminder_home" "$ROOT_DIR/bin/code-notify" usage status)
+printf '%s' "$reminder_status" | grep -q "Reset reminders: .*DISABLED" || fail "reset reminders should be optional"
+
 watch_home="$test_dir/watch-home"
 mkdir -p "$watch_home/.codex"
 printf '{"tokens":{"access_token":"codex-token"}}' > "$watch_home/.codex/auth.json"
@@ -155,4 +225,4 @@ PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$watch_home" \
 stopped_status=$(PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$watch_home" "$ROOT_DIR/bin/code-notify" usage watch status)
 printf '%s' "$stopped_status" | grep -q "Watcher: .*STOPPED" || fail "usage watcher should stop cleanly"
 
-pass "usage alerts detect Codex thresholds and reset transitions without duplicates"
+pass "usage alerts detect Codex thresholds, reset reminders, and reset transitions without duplicates"
