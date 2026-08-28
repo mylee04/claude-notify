@@ -185,6 +185,20 @@ run_reminder_check
 same_reminder_count=$(wc -l < "$notify_log")
 [[ "$same_reminder_count" -eq "$reminder_count" ]] || fail "same reset reminder should not duplicate"
 
+# A full-quota observation must not erase reminders already sent in this cycle.
+reminder_secondary_used=1
+run_reminder_check
+before_full_reminder_count=$(grep -c "weekly (7d) resets in under" "$notify_log")
+reminder_secondary_used=0
+run_reminder_check
+full_reminder_count=$(grep -c "weekly (7d) resets in under" "$notify_log")
+[[ "$full_reminder_count" -eq "$before_full_reminder_count" ]] || fail "full quota should suppress advance reminders"
+reminder_secondary_used=1
+run_reminder_check
+after_full_reminder_count=$(grep -c "weekly (7d) resets in under" "$notify_log")
+[[ "$after_full_reminder_count" -eq "$before_full_reminder_count" ]] || fail "99 -> 100 -> 99 percent in the same reset cycle should not repeat a reminder"
+reminder_secondary_used=24
+
 reminder_now=$((reminder_reset_at - 23 * 3600))
 run_reminder_check
 grep -q "weekly (7d) resets in under 24 hours" "$notify_log" || fail "24 hour reset reminder missing"
@@ -199,6 +213,17 @@ grep -q "weekly (7d) resets in under 6 hours" "$notify_log" || fail "late watche
 reminder_now=$((reminder_reset_at - 20 * 60))
 run_reminder_check
 grep -q "weekly (7d) resets in under 30 minutes" "$notify_log" || fail "30 minute reset reminder missing"
+
+# A new reset timestamp must re-arm reminders even without observing full quota.
+reminder_reset_at=$((reminder_reset_at + 7 * 24 * 3600))
+reminder_now=$((reminder_reset_at - 47 * 3600))
+before_new_cycle_count=$(grep -c "weekly (7d) resets in under 48 hours" "$notify_log")
+run_reminder_check
+new_cycle_count=$(grep -c "weekly (7d) resets in under 48 hours" "$notify_log")
+[[ "$new_cycle_count" -eq $((before_new_cycle_count + 1)) ]] || fail "new reset cycle should re-arm the 48 hour reminder"
+run_reminder_check
+repeated_new_cycle_count=$(grep -c "weekly (7d) resets in under 48 hours" "$notify_log")
+[[ "$repeated_new_cycle_count" -eq "$new_cycle_count" ]] || fail "new reset cycle reminder should still be deduplicated"
 
 : > "$notify_log"
 PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$reminder_home" \

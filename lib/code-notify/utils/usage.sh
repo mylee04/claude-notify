@@ -701,9 +701,8 @@ for line in quota_lines:
         state["resets"][reset_key] = {"full": False}
 
     reset_epoch = parse_reset_epoch(reset_at)
-    if remaining >= 100:
-        state["reminders"].pop(reset_key, None)
-    elif reset_epoch is not None and reset_epoch > now_epoch and reset_reminders:
+    # Full quota suppresses delivery, but only a new reset cycle re-arms reminders.
+    if remaining < 100 and reset_epoch is not None and reset_epoch > now_epoch and reset_reminders:
         window_span_hours = {"5h": 5, "7d": 168}.get(window)
         applicable = [value for value in reset_reminders if window_span_hours is None or value <= window_span_hours]
         seconds_until_reset = reset_epoch - now_epoch
