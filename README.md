@@ -8,14 +8,14 @@
 
 Desktop notifications for AI coding tools - get alerts when tasks complete or input is needed.
 
-## Latest: T3 Code Thread Titles
+## Latest: Advance Usage Reset Reminders
 
-On macOS, Code-Notify now shows the matching T3 Code thread title in Codex completion notifications instead of a generic workspace name.
+On macOS/Linux (including WSL), Code-Notify can now remind you before Codex or Claude usage resets, using the existing usage watcher and notification channels.
 
-- **Automatic matching**: Uses the Codex `thread-id` to find the corresponding T3 Code thread
-- **Safe fallback**: Uses the workspace name when T3 Code is unavailable or no matching thread exists
-- **No extra setup**: Existing `cn on codex` configurations pick up the feature after updating
-- **macOS scoped**: Linux, WSL, and native Windows notification behavior is unchanged
+- **Default schedule**: Weekly reminders at 48h, 24h, 12h, 6h, 2h, and 30m; 5h windows use 2h and 30m
+- **Once per reset cycle**: Full-quota observations do not erase previously sent reminders
+- **Quiet catch-up**: Missed stages collapse into the most urgent reminder for each window
+- **Configurable**: Choose your own schedule with `cn usage reset-reminders set 24,6,1`, or disable it with `cn usage reset-reminders off`
 
 Update and verify the installed version:
 
@@ -24,7 +24,7 @@ cn update
 code-notify version
 ```
 
-Usage reset alerts and advance reminders are available for Codex and Claude: `cn usage setup --watch`.
+Usage alerts remain opt-in: start with `cn usage setup --watch`. Existing enabled usage configs without a `reset_reminders` setting use the default reminder schedule. After updating, restart any running watcher with `cn usage watch restart` (include your provider and interval options if customized).
 
 Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-daily-limit-reset.m4a) · [Weekly reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-weekly-limit-reset.m4a)
 
@@ -35,7 +35,7 @@ Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@mai
   <img src="assets/multi-tools-support-02.png" width="48%" alt="All tools enabled"/>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.12.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
+[![Version](https://img.shields.io/badge/version-1.13.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-supported-green.svg)](https://www.apple.com/macos)
 [![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
@@ -43,12 +43,12 @@ Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@mai
 
 ---
 
-## What's New in v1.12.0
+## What's New in v1.13.0
 
-- **T3 Code context on macOS**: Codex completion notifications use the matching T3 Code thread title
-- **Resilient local lookup**: Missing, malformed, or non-object T3 state entries are ignored without interrupting notifications
-- **Safe notification text**: Quoted thread titles are passed to AppleScript without breaking delivery
-- **Workspace fallback**: Existing Codex notification context remains available when no T3 Code title can be resolved
+- **Advance reset reminders**: Configurable schedules based on provider-reported reset times
+- **Per-cycle dedupe**: Prevent repeat reminders after a temporary return to 100% quota, while re-arming for the next reset cycle
+- **Flexible timestamps**: Accept Unix seconds, milliseconds, and ISO-8601 reset times
+- **Existing delivery paths**: Reuse desktop, voice, sound, Slack, and Discord without a new service or dependency
 
 ---
 
@@ -62,7 +62,7 @@ Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@mai
 - **Sound notifications** - Play custom sounds on task completion
 - **Voice announcements** - Hear when tasks complete (macOS, Windows)
 - **Slack/Discord delivery** - Mirror notifications to incoming webhooks
-- **Usage alerts** - Opt-in Codex/Claude 20%, 10%, and reset notifications
+- **Usage alerts** - Opt-in Codex/Claude 20%, 10%, advance reset reminders, and reset notifications (macOS/Linux)
 - **Tool-specific messages** - "Claude completed the task", "Codex completed the task", "omp completed the task"
 - **Project-specific settings** - Different configs per project
 - **Quick aliases** - `cn` and `cnp` for fast access
@@ -263,7 +263,7 @@ Webhook URLs are stored locally in `~/.config/code-notify/channels.json` and are
 
 ### Usage Alerts
 
-Usage alerts are opt-in for Codex and Claude. Fast setup:
+Usage alerts and advance reminders are opt-in for Codex and Claude on macOS/Linux, including WSL. Native Windows usage polling and advance reminders are not implemented yet. Fast setup:
 
 ```bash
 cn usage setup --watch
@@ -284,9 +284,9 @@ cn usage check                      # Run one check now
 cn usage watch start --interval 300 # Keep watching in the background
 ```
 
-Code-Notify checks the daily (5h) and weekly (7d) usage windows. It sends a warning when remaining usage crosses 20% or 10%, advance reminders while unused quota is approaching its reset, and a reset notification when a window returns to 100%. Weekly windows use all default reminder stages; 5h windows use the 2h and 30m stages.
+Code-Notify checks the daily (5h) and weekly (7d) usage windows. It sends a warning when remaining usage crosses 20% or 10%, advance reminders when a provider-reported reset approaches, and a reset notification when a window returns to 100%. Weekly windows use all default reminder stages; 5h windows use the 2h and 30m stages.
 
-Each reminder is sent once per reset cycle. If the watcher was stopped while several stages passed, Code-Notify sends only the most urgent catch-up reminder instead of a burst. Customize or disable the schedule with:
+Each reminder stage is sent once per reset cycle. Reminders are suppressed while quota is full, without forgetting stages already sent in that cycle. If the watcher was stopped while several stages passed, Code-Notify sends only the most urgent catch-up reminder per window instead of a burst. Existing enabled usage configs without a `reset_reminders` setting use the default schedule after upgrading. Customize or disable it with:
 
 ```bash
 cn usage reset-reminders set 24,6,1
@@ -295,6 +295,8 @@ cn usage reset-reminders reset
 ```
 
 `cn usage check` runs once and exits. `cn usage watch start` keeps watching in the background on macOS/Linux. Use `cn usage watch stop` to stop it.
+
+After updating Code-Notify, restart any running watcher with `cn usage watch restart` so it loads the new runtime. Include the same provider and `--interval` options if you previously customized them.
 
 Terminal demo:
 

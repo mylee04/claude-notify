@@ -1,6 +1,6 @@
 {
   "name": "code-notify",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Desktop notifications and usage reset alerts for Claude Code, Codex CLI, Gemini CLI, Oh My Pi, and AI coding agents",
   "license": "MIT",
   "homepage": "https://github.com/mylee04/code-notify#readme",
