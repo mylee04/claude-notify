@@ -10,7 +10,7 @@ Code-Notify adds desktop notifications to Claude Code, Codex, and Gemini CLI. Yo
 - Claude or Gemini needs your input
 - Voice announcements (macOS)
 - Slack or Discord webhook messages when channels are configured
-- Codex or Claude usage crosses configured thresholds or resets
+- Codex or Claude usage crosses configured thresholds, approaches a reset, or resets (macOS/Linux)
 
 Codex currently exposes completion notifications through its `notify` hook. Approval and `request_permissions` prompts do not currently trigger Code-Notify through Codex.
 
@@ -66,14 +66,26 @@ Webhook URLs are stored locally and are redacted in status output.
 
 ### Optional Usage Alerts
 
+Usage polling and advance reset reminders support macOS/Linux, including WSL. They are not implemented in the native Windows runtime yet.
+
 ```bash
 cn usage setup --watch
 cn usage status
 ```
 
-Usage alerts currently support Codex and Claude daily (5h) and weekly (7d) windows. Low-usage warnings use normal Code-Notify delivery. Token reset alerts are separate and can use their own voice/sound controls with `cn usage reset-alerts ...`. Reset voice messages identify the window, such as `Codex token daily limit reset` or `Codex token weekly limit reset`.
+Usage alerts support Codex and Claude daily (5h) and weekly (7d) windows. Low-usage warnings and advance reset reminders use normal Code-Notify delivery, including configured Slack/Discord channels. Token reset alerts are separate and can use their own voice/sound controls with `cn usage reset-alerts ...`. Reset voice messages identify the window, such as `Codex token daily limit reset` or `Codex token weekly limit reset`.
 
-`cn usage setup --watch` enables usage alerts, sets the default 20% and 10% warning thresholds, enables distinct reset voice/sound, and starts a background watcher on macOS/Linux. `cn usage check` runs once and exits. Use `cn usage watch stop` to stop the watcher.
+`cn usage setup --watch` enables usage alerts, sets the default 20% and 10% warning thresholds, configures advance reminders at 48h, 24h, 12h, 6h, 2h, and 30m, enables distinct reset voice/sound, and starts a background watcher. Weekly windows use every default reminder stage; 5h windows use only 2h and 30m. `cn usage check` runs once and exits. Use `cn usage watch stop` to stop the watcher.
+
+Reminder stages are deduplicated per reset cycle, including when quota temporarily returns to 100%. Full quota suppresses advance reminders, and missed stages collapse into the most urgent catch-up reminder per window. Customize or disable the schedule with:
+
+```bash
+cn usage reset-reminders set 24,6,1
+cn usage reset-reminders off
+cn usage reset-reminders reset
+```
+
+Existing enabled usage configs without a `reset_reminders` setting use the default reminder schedule after upgrading. Restart any running watcher with `cn usage watch restart` after updating so it loads the new runtime; include the same provider and `--interval` options if you previously customized them.
 
 They use existing local login state from `~/.codex/auth.json` and `~/.claude/.credentials.json`. Code-Notify does not start provider login flows. Background watching starts only when you run `cn usage setup --watch` or `cn usage watch start`.
 
