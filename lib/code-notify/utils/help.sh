@@ -103,6 +103,7 @@ ${BOLD}USAGE ALERT COMMANDS:${RESET}
     ${GREEN}usage check${RESET} [tool]  Check now and notify on threshold/reset changes
     ${GREEN}usage watch${RESET} [tool] [--interval seconds]
     ${GREEN}usage watch start${RESET} [tool] [--interval seconds]
+    ${GREEN}usage reset-reminders${RESET} set|off|reset
     ${GREEN}usage watch stop${RESET}    Stop background usage watcher
     ${GREEN}usage thresholds set${RESET} 20,10
     ${GREEN}usage reset-state${RESET}   Clear usage alert dedupe state
@@ -200,11 +201,13 @@ ${BOLD}USAGE:${RESET}
     cn usage watch stop|restart|status
     cn usage thresholds set 20,10
     cn usage thresholds reset
+    cn usage reset-reminders set 48,24,12,6,2,0.5
+    cn usage reset-reminders on|off|reset
     cn usage reset-alerts on|off
     cn usage reset-alerts voice on|off
     cn usage reset-alerts sound on|off|set <path>|default
     cn usage reset-state
 
-Usage alerts are opt-in. Use 'cn usage setup --watch' for the fastest setup. Low-usage warnings use normal Code-Notify delivery. Reset alerts have separate voice/sound controls so token reset can feel distinct from task-complete notifications.
+Usage alerts are opt-in. Use 'cn usage setup --watch' for the fastest setup. Low-usage warnings and advance reset reminders use normal Code-Notify delivery. Reset alerts have separate voice/sound controls so token reset can feel distinct from task-complete notifications.
 EOF
 }

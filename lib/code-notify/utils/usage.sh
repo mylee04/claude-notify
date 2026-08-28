@@ -17,7 +17,7 @@ ensure_usage_dir() {
 }
 
 usage_default_config_json() {
-    printf '%s\n' '{"enabled":false,"providers":["codex","claude"],"thresholds":[20,10],"reset_alerts":{"enabled":true,"voice":true,"sound":true,"sound_file":""}}'
+    printf '%s\n' '{"enabled":false,"providers":["codex","claude"],"thresholds":[20,10],"reset_reminders":[48,24,12,6,2,0.5],"reset_alerts":{"enabled":true,"voice":true,"sound":true,"sound_file":""}}'
 }
 
 usage_read_config_json() {
@@ -142,6 +142,83 @@ PY
 ) || return 1
     usage_write_config_json "$updated" || return 1
     success "Usage thresholds set: $thresholds"
+}
+
+usage_set_reset_reminders() {
+    local reminder_hours="$1"
+    local current updated
+
+    usage_has_python3 || { error "python3 is required to manage usage alerts"; return 1; }
+    [[ -n "$reminder_hours" ]] || { error "Please provide reset reminder hours, for example: cn usage reset-reminders set 48,24,12,6,2,0.5"; return 1; }
+
+    current="$(usage_read_config_json)"
+    updated=$(USAGE_JSON="$current" python3 - "$reminder_hours" <<'PY'
+import json
+import math
+import os
+import sys
+
+raw = sys.argv[1].replace(" ", "")
+if raw.lower() in ("off", "none"):
+    reminders = []
+else:
+    try:
+        reminders = [float(item) for item in raw.split(",") if item]
+    except Exception:
+        raise SystemExit(1)
+    if not reminders or any(not math.isfinite(value) or value <= 0 or value > 168 for value in reminders):
+        raise SystemExit(1)
+    reminders = sorted(set(reminders), reverse=True)
+    reminders = [int(value) if value.is_integer() else value for value in reminders]
+
+try:
+    data = json.loads(os.environ.get("USAGE_JSON", "{}"))
+except Exception:
+    data = {}
+
+data["enabled"] = bool(data.get("enabled", False))
+data["providers"] = data.get("providers") or ["codex", "claude"]
+data["thresholds"] = data.get("thresholds") or [20, 10]
+data["reset_reminders"] = reminders
+data["reset_alerts"] = data.get("reset_alerts") or {"enabled": True, "voice": True, "sound": True, "sound_file": ""}
+print(json.dumps(data, separators=(",", ":")))
+PY
+) || { error "Reset reminders must be comma-separated hours between 0 and 168"; return 1; }
+    usage_write_config_json "$updated" || return 1
+
+    if [[ "$reminder_hours" =~ ^([Oo][Ff][Ff]|[Nn][Oo][Nn][Ee])$ ]]; then
+        success "Usage reset reminders disabled"
+    else
+        success "Usage reset reminders set: $reminder_hours hours"
+    fi
+}
+
+usage_reset_reminders_default() {
+    usage_set_reset_reminders "48,24,12,6,2,0.5"
+}
+
+usage_handle_reset_reminders_command() {
+    local subcommand="${1:-status}"
+
+    case "$subcommand" in
+        "status"|"")
+            usage_status
+            ;;
+        "set")
+            usage_set_reset_reminders "${2:-}"
+            ;;
+        "on"|"reset")
+            usage_reset_reminders_default
+            ;;
+        "off")
+            usage_set_reset_reminders "off"
+            ;;
+        *)
+            error "Unknown reset-reminders command: $subcommand"
+            show_usage_help
+            return 1
+            ;;
+    esac
 }
 
 usage_set_reset_alert_field() {
@@ -284,7 +361,7 @@ usage_reset_thresholds() {
 }
 
 usage_reset_state() {
-    usage_write_state_json '{"thresholds":{},"resets":{}}'
+    usage_write_state_json '{"thresholds":{},"resets":{},"reminders":{}}'
     success "Usage alert state reset"
 }
 
@@ -340,6 +417,24 @@ except Exception:
 
 print("enabled\t" + ("true" if data.get("enabled", False) else "false"))
 print("thresholds\t" + ",".join(str(v) for v in data.get("thresholds", [20, 10])))
+reminders = data["reset_reminders"] if "reset_reminders" in data else [48, 24, 12, 6, 2, 0.5]
+if not isinstance(reminders, (list, tuple)):
+    reminders = []
+reminder_labels = []
+for value in reminders:
+    try:
+        hours = float(value)
+    except Exception:
+        continue
+    if not (hours > 0 and hours < float("inf")):
+        continue
+    if hours == 0.5:
+        reminder_labels.append("30m")
+    elif hours.is_integer():
+        reminder_labels.append(f"{int(hours)}h")
+    else:
+        reminder_labels.append(f"{hours:g}h")
+print("reset_reminders\t" + ",".join(reminder_labels))
 reset_alerts = data.get("reset_alerts") or {}
 print("reset_alerts\t" + ("true" if reset_alerts.get("enabled", True) else "false"))
 print("reset_voice\t" + ("true" if reset_alerts.get("voice", True) else "false"))
@@ -361,6 +456,13 @@ PY
                 ;;
             thresholds)
                 echo "  Thresholds: ${CYAN}$value${RESET}"
+                ;;
+            reset_reminders)
+                if [[ -n "$value" ]]; then
+                    echo "  Reset reminders: ${GREEN}ENABLED${RESET} (${CYAN}$value${RESET})"
+                else
+                    echo "  Reset reminders: ${DIM}DISABLED${RESET}"
+                fi
                 ;;
             reset_alerts)
                 if [[ "$value" == "true" ]]; then
@@ -518,12 +620,41 @@ usage_state_events() {
     if [[ -f "$USAGE_STATE_FILE" ]]; then
         state="$(cat "$USAGE_STATE_FILE")"
     else
-        state='{"thresholds":{},"resets":{}}'
+        state='{"thresholds":{},"resets":{},"reminders":{}}'
     fi
 
     updated_output=$(python3 - "$config" "$state" "$quota_lines" <<'PY'
 import json
+import math
+import os
 import sys
+import time
+from datetime import datetime, timezone
+
+
+def parse_reset_epoch(value):
+    if not value or value == "null":
+        return None
+    try:
+        epoch = float(value)
+        if not math.isfinite(epoch):
+            return None
+        if epoch > 10_000_000_000:
+            epoch /= 1000
+        return epoch
+    except (TypeError, ValueError):
+        pass
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def hour_marker(value):
+    return str(int(value)) if float(value).is_integer() else f"{value:g}"
 
 config = json.loads(sys.argv[1] or "{}")
 try:
@@ -532,8 +663,25 @@ except Exception:
     state = {}
 quota_lines = sys.argv[3].splitlines()
 thresholds = sorted({int(v) for v in config.get("thresholds", [20, 10])}, reverse=True)
+reset_reminders = []
+configured_reminders = config["reset_reminders"] if "reset_reminders" in config else [48, 24, 12, 6, 2, 0.5]
+if not isinstance(configured_reminders, (list, tuple)):
+    configured_reminders = []
+for value in configured_reminders:
+    try:
+        hours = float(value)
+    except (TypeError, ValueError):
+        continue
+    if math.isfinite(hours) and 0 < hours <= 168:
+        reset_reminders.append(hours)
+reset_reminders = sorted(set(reset_reminders), reverse=True)
+try:
+    now_epoch = float(os.environ.get("CODE_NOTIFY_USAGE_NOW_EPOCH", time.time()))
+except (TypeError, ValueError):
+    now_epoch = time.time()
 state.setdefault("thresholds", {})
 state.setdefault("resets", {})
+state.setdefault("reminders", {})
 events = []
 
 for line in quota_lines:
@@ -551,6 +699,39 @@ for line in quota_lines:
         state["resets"][reset_key] = {"full": True}
     else:
         state["resets"][reset_key] = {"full": False}
+
+    reset_epoch = parse_reset_epoch(reset_at)
+    # Full quota suppresses delivery, but only a new reset cycle re-arms reminders.
+    if remaining < 100 and reset_epoch is not None and reset_epoch > now_epoch and reset_reminders:
+        window_span_hours = {"5h": 5, "7d": 168}.get(window)
+        applicable = [value for value in reset_reminders if window_span_hours is None or value <= window_span_hours]
+        seconds_until_reset = reset_epoch - now_epoch
+        due = [value for value in applicable if seconds_until_reset <= value * 3600]
+
+        reminder_entry = state["reminders"].get(reset_key)
+        same_cycle = False
+        notified = set()
+        if isinstance(reminder_entry, dict):
+            try:
+                same_cycle = abs(float(reminder_entry.get("reset_epoch", 0)) - reset_epoch) <= 900
+            except (TypeError, ValueError):
+                same_cycle = False
+            if same_cycle:
+                for value in reminder_entry.get("hours", []):
+                    try:
+                        notified.add(float(value))
+                    except (TypeError, ValueError):
+                        pass
+
+        unseen_due = [value for value in due if value not in notified]
+        if unseen_due:
+            marker = min(unseen_due)
+            events.append(["reset_reminder", provider, window, str(remaining), reset_at, hour_marker(marker)])
+            notified.update(due)
+        state["reminders"][reset_key] = {
+            "reset_epoch": reset_epoch,
+            "hours": sorted(notified, reverse=True),
+        }
 
     for threshold in thresholds:
         key = f"{provider}:{window}:{threshold}"
@@ -603,6 +784,14 @@ usage_window_voice_label() {
     esac
 }
 
+usage_reset_reminder_label() {
+    case "$1" in
+        "0.5") printf '%s\n' "30 minutes" ;;
+        "1") printf '%s\n' "1 hour" ;;
+        *) printf '%s\n' "$1 hours" ;;
+    esac
+}
+
 usage_send_event() {
     local kind="$1"
     local provider="$2"
@@ -610,7 +799,7 @@ usage_send_event() {
     local remaining="$4"
     local reset_at="$5"
     local marker="$6"
-    local title message voice_message notifier display_name window_label window_voice_label reset_enabled reset_voice reset_sound reset_sound_file hook_type
+    local title message voice_message notifier display_name window_label window_voice_label reminder_label reset_enabled reset_voice reset_sound reset_sound_file hook_type
 
     display_name="$(usage_display_name "$provider")"
     window_label="$(usage_window_label "$window")"
@@ -634,12 +823,19 @@ usage_send_event() {
             voice_message="$display_name usage is low"
             hook_type="usage"
             ;;
+        reset_reminder)
+            reminder_label="$(usage_reset_reminder_label "$marker")"
+            title="$display_name $window_voice_label reset soon"
+            message="$display_name $window_label resets in under $reminder_label. ${remaining}% remains; use it before the reset."
+            voice_message="$display_name $window_voice_label resets in under $reminder_label"
+            hook_type="usage"
+            ;;
         *)
             return 0
             ;;
     esac
 
-    if [[ -n "$reset_at" && "$reset_at" != "null" ]]; then
+    if [[ "$kind" != "reset_reminder" && -n "$reset_at" && "$reset_at" != "null" ]]; then
         message="$message Reset: $reset_at"
     fi
 
@@ -857,6 +1053,7 @@ usage_setup() {
 
     usage_set_enabled "$normalized" true || return 1
     usage_set_thresholds "20,10" >/dev/null || return 1
+    usage_reset_reminders_default >/dev/null || return 1
     usage_set_reset_alert_field enabled true || return 1
     usage_set_reset_alert_field voice true || return 1
     usage_set_reset_alert_field sound true || return 1
@@ -865,6 +1062,7 @@ usage_setup() {
     success "Usage reset alerts configured"
     info "Providers: $normalized"
     info "Thresholds: 20%, 10%"
+    info "Reset reminders: 48h, 24h, 12h, 6h, 2h, 30m"
     info "Reset alerts: voice and distinct reset sound enabled"
 
     if [[ "$start_watch" == "true" ]]; then
@@ -980,6 +1178,9 @@ handle_usage_command() {
                     usage_status
                     ;;
             esac
+            ;;
+        "reset-reminders")
+            usage_handle_reset_reminders_command "$@"
             ;;
         "reset-alerts")
             usage_handle_reset_alerts_command "$@"
