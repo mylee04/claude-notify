@@ -448,7 +448,7 @@ has_legacy_global_claude_hooks() {
 
     grep -q 'claude-notify' "$file" ||
         grep -qE 'notifier\.sh (notification|stop)"' "$file" ||
-        grep -q 'notifier.sh PreToolUse' "$file" ||
+        grep -qE 'notifier\.sh PreToolUse"' "$file" ||
         grep -qE 'notify\.ps1.* (notification|stop)"' "$file" ||
         grep -qE 'notify\.ps1.* PreToolUse' "$file"
 }
