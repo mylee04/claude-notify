@@ -13,7 +13,7 @@ mkdir -p "$CLAUDE_HOME/notifications"
 
 source "$ROOT_DIR/lib/code-notify/core/config.sh"
 
-notify_script="$test_dir/notify.sh"
+notify_script="$test_dir/notifier.sh"
 get_notify_script() {
     printf '%s\n' "$notify_script"
 }
@@ -54,6 +54,10 @@ set_notify_types "idle_prompt|ask_user"
 enable_hooks_in_settings
 enable_hooks_in_settings
 
+if claude_global_hooks_need_repair; then
+    fail "current ask_user hook was incorrectly flagged as legacy"
+fi
+
 python3 - "$GLOBAL_SETTINGS_FILE" "$notify_script" <<'PYTHON'
 import json
 import sys
@@ -90,6 +94,29 @@ if not any(
 ):
     raise SystemExit("custom non-AskUserQuestion PreToolUse hook was not preserved")
 PYTHON
+
+legacy_settings_file="$test_dir/legacy-settings.json"
+cat > "$legacy_settings_file" <<JSON
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$notify_script PreToolUse"
+          }
+        ]
+      }
+    ]
+  }
+}
+JSON
+
+if ! has_legacy_global_claude_hooks "$legacy_settings_file"; then
+    fail "legacy PreToolUse hook was not flagged for repair"
+fi
 
 unregister_ask_user_hook "$GLOBAL_SETTINGS_FILE" "$(get_global_claude_pre_tool_use_command)"
 
