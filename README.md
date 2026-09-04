@@ -24,6 +24,8 @@ cn update
 code-notify version
 ```
 
+**v1.13.1 maintenance fix:** `cn status` no longer reports `REPAIR NEEDED` for the current Claude `ask_user` hook format, while genuine legacy hooks remain repairable.
+
 Usage alerts remain opt-in: start with `cn usage setup --watch`. Existing enabled usage configs without a `reset_reminders` setting use the default reminder schedule. After updating, restart any running watcher with `cn usage watch restart` (include your provider and interval options if customized).
 
 Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-daily-limit-reset.m4a) · [Weekly reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@main/assets/audio/codex-token-weekly-limit-reset.m4a)
@@ -35,7 +37,7 @@ Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@mai
   <img src="assets/multi-tools-support-02.png" width="48%" alt="All tools enabled"/>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.13.0-blue.svg)](https://github.com/mylee04/code-notify/releases)
+[![Version](https://img.shields.io/badge/version-1.13.1-blue.svg)](https://github.com/mylee04/code-notify/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![macOS](https://img.shields.io/badge/macOS-supported-green.svg)](https://www.apple.com/macos)
 [![Linux](https://img.shields.io/badge/Linux-supported-green.svg)](https://www.linux.org/)
@@ -43,12 +45,11 @@ Voice samples: [Daily reset](https://cdn.jsdelivr.net/gh/mylee04/code-notify@mai
 
 ---
 
-## What's New in v1.13.0
+## What's New in v1.13.1
 
-- **Advance reset reminders**: Configurable schedules based on provider-reported reset times
-- **Per-cycle dedupe**: Prevent repeat reminders after a temporary return to 100% quota, while re-arming for the next reset cycle
-- **Flexible timestamps**: Accept Unix seconds, milliseconds, and ISO-8601 reset times
-- **Existing delivery paths**: Reuse desktop, voice, sound, Slack, and Discord without a new service or dependency
+- **Accurate Claude status**: Current `ask_user` hooks using `PreToolUse claude` are recognized as enabled instead of legacy
+- **No repair loop**: Re-running `cn on claude` is no longer suggested for a configuration Code-Notify just installed
+- **Legacy compatibility retained**: Older `PreToolUse` commands without the Claude tool argument are still detected for repair
 
 ---
 
