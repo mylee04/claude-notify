@@ -85,6 +85,7 @@ ${BOLD}SOUND COMMANDS:${RESET}
     ${GREEN}sound test${RESET}          Play current sound
     ${GREEN}sound list${RESET}          Show available system sounds
     ${GREEN}sound status${RESET}        Show sound configuration
+    ${GREEN}lang${RESET} <locale>       Set notification language (en/zh)
 
 ${BOLD}CHANNEL COMMANDS:${RESET}
     ${GREEN}channels status${RESET}     Show Slack/Discord channel status
@@ -150,6 +151,7 @@ ${BOLD}EXAMPLES:${RESET}
     cn usage check
     cn sound on             # Enable notification sounds
     cn sound set ~/ding.wav # Use custom sound
+    cn lang zh              # Switch notification text to Chinese
 EOF
 
     if is_macos_help_context; then

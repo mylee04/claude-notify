@@ -10,6 +10,7 @@ source "$GLOBAL_CMD_DIR/../utils/help.sh"
 source "$GLOBAL_CMD_DIR/../utils/click-through.sh"
 source "$GLOBAL_CMD_DIR/../utils/channels.sh"
 source "$GLOBAL_CMD_DIR/../utils/usage.sh"
+source "$GLOBAL_CMD_DIR/../utils/lang.sh"
 
 CODE_NOTIFY_RELEASES_API="https://api.github.com/repos/mylee04/code-notify/releases/latest"
 
@@ -54,6 +55,9 @@ handle_global_command() {
             ;;
         "click-through")
             handle_click_through_command "$@"
+            ;;
+        "lang")
+            handle_lang_command "$@"
             ;;
         "help")
             show_help
@@ -593,6 +597,16 @@ show_status() {
     else
         echo "  ${DIM}- omp: not installed${RESET}"
     fi
+
+    # Language status
+    local lang_display
+    lang_display="$(get_lang)"
+    case "$lang_display" in
+        "zh") lang_display="中文" ;;
+        *) lang_display="English" ;;
+    esac
+    echo "  ${GLOBE} Language: ${CYAN}$lang_display${RESET}"
+    echo ""
 
     # Voice status
     echo ""
@@ -1368,4 +1382,63 @@ show_sound_status() {
     echo "  ${CYAN}cn sound default${RESET}         Reset to system default"
     echo "  ${CYAN}cn sound test${RESET}            Play current sound"
     echo "  ${CYAN}cn sound list${RESET}            Show available system sounds"
+}
+
+# ============================================
+# Language / i18n Management
+# ============================================
+
+# Handle lang commands
+# Usage: cn lang, cn lang <locale>, cn lang status
+handle_lang_command() {
+    local subcommand="${1:-status}"
+
+    case "$subcommand" in
+        "zh"|"zh-CN"|"zh_CN"|"cn"|"chinese")
+            set_lang "zh"
+            success "语言已切换为中文"
+            info "通知文案将显示为中文。运行 ${CYAN}cn test${RESET} 测试效果。"
+            ;;
+        "en"|"english")
+            set_lang "en"
+            success "Language set to English"
+            info "Notifications will now display in English. Run ${CYAN}cn test${RESET} to verify."
+            ;;
+        "status"|"")
+            local current
+            current=$(get_lang)
+            case "$current" in
+                "zh")
+                    echo "当前语言: 中文 (zh)"
+                    echo ""
+                    echo "切换为英文: ${CYAN}cn lang en${RESET}"
+                    ;;
+                *)
+                    echo "Current language: English (en)"
+                    echo ""
+                    echo "Switch to Chinese: ${CYAN}cn lang zh${RESET}"
+                    ;;
+            esac
+            ;;
+        "help"|"-h"|"--help")
+            echo ""
+            echo "Usage: cn lang [locale|status]"
+            echo ""
+            echo "Locales:"
+            echo "  ${CYAN}en${RESET}    English (default)"
+            echo "  ${CYAN}zh${RESET}    中文"
+            echo ""
+            echo "Examples:"
+            echo "  cn lang zh       # Switch to Chinese"
+            echo "  cn lang en       # Switch to English"
+            echo "  cn lang status   # Show current language"
+            ;;
+        *)
+            error "Unknown language: $subcommand"
+            echo ""
+            echo "Available: en, zh"
+            echo "Usage: cn lang <en|zh>"
+            return 1
+            ;;
+    esac
 }
